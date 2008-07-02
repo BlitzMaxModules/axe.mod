@@ -1,0 +1,225 @@
+<html><head><title>LUA Script Engine reference</title>
+<link rel=stylesheet Type=text/css href='../../../../doc/bmxstyle.css'>
+</head><body>
+<table width=100% cellspacing=0><tr align=center><td class=small>&nbsp;</td>
+<td class=small width=1%><b>axe.luascript:</b></td>
+<td class=small width=1%><a href=#types class=small>Types</a></td>
+<td class=small width=1%><a href=#modinfo class=small>Modinfo</a></td>
+<td class=small width=1%><a href='../../../../mod/axe.mod/luascript.mod/luascript.bmx' class=small>Source</a></td>
+<td class=small>&nbsp;</td></tr></table>
+<h1>LUA Script Engine</h1>
+<h2><a name=types></a>Types Summary</h2><table class=doc width=100%>
+<tr><td class=docleft width=1%><a href=#TLuaScriptEngine>TLuaScriptEngine</a></td><td class=docright>
+Lua script engine type.
+</td></tr>
+</table>
+<h2
+ id=typesdet>Types
+</h2>
+<table class=doc width=100% cellspacing=3 id=TLuaScriptEngine>
+<tr><td class=doctop colspan=2>Type TLuaScriptEngine</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Lua script engine type.</td></tr>
+<tr><td class=docleft width=1%><a href=TLuaScriptEngine.bmx class=small>Example</a></td><td class=docright><pre>Strict
+
+Import axe.luascript
+
+Function LUA_MyFunction( ls:Byte Ptr )
+     lua.ReturnStringToLua("Hello, World!")
+     Return 1  'returning one variable
+End Function
+
+Global lua:TLuaScriptEngine=New TLuaScriptEngine
+
+lua.reset()
+
+lua.addFunction(LUA_MyFunction,"MyFunction")
+
+lua.SetScriptText "print(MyFunction())","myscript"
+
+lua.RunScript
+
+lua.Shutdown()</pre></td></tr>
+</table>
+<table class=doc width=90% align=center><tr ><th class=doctop colspan=2 align=left><a name=TLuaScriptEngine_methods></a>Methods Summary</th></tr>
+<tr><td class=docleft width=1%><a href=#AddBooleanParameter>AddBooleanParameter</a></td><td class=docright>
+Adds a boolean parameter to a LUA function call.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#AddFunction>AddFunction</a></td><td class=docright>
+Adds a Function into the LUA environment.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#AddNumberParameter>AddNumberParameter</a></td><td class=docright>
+Adds a number parameter to a LUA function call.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#AddStringParameter>AddStringParameter</a></td><td class=docright>
+Adds a string parameter to a LUA function call.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#BeginLUAFunctionCall>BeginLUAFunctionCall</a></td><td class=docright>
+Performs initialization required for call a function in LUA.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#CallFunction>CallFunction</a></td><td class=docright>
+Calls a function in LUA.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#CheckNumber>CheckNumber</a></td><td class=docright>
+Checks a number parameter and return its value.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#CheckString>CheckString</a></td><td class=docright>
+Checks a string parameter and return its value.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#GetLastErrorNumber>GetLastErrorNumber</a></td><td class=docright>
+Returns the last error number.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#GetLastErrorString>GetLastErrorString</a></td><td class=docright>
+Returns the last error string.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#GetResultBoolean>GetResultBoolean</a></td><td class=docright>
+Get the result of a LUA function call as a boolean.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#GetResultNumber>GetResultNumber</a></td><td class=docright>
+Get the result of a LUA function call as a number.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#GetResultString>GetResultString</a></td><td class=docright>
+Get the result of a LUA function call as a string.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#GetResultType>GetResultType</a></td><td class=docright>
+Tells the result type of a LUA function call.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#ProcessError>ProcessError</a></td><td class=docright>
+Internal.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#Reset>Reset</a></td><td class=docright>
+Resets the engine back to a start state.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#ReturnBooleanToLua>ReturnBooleanToLua</a></td><td class=docright>
+Returns a boolean back to LUA from a callback BMX function.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#ReturnNumberToLua>ReturnNumberToLua</a></td><td class=docright>
+Returns a number back to LUA from a callback BMX function.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#ReturnStringToLua>ReturnStringToLua</a></td><td class=docright>
+Returns a string back to LUA from a callback BMX function.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#RunScript>RunScript</a></td><td class=docright>
+Runs a script loaded with SetScriptText.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#RunScriptFile>RunScriptFile</a></td><td class=docright>
+Runs a script file.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#SetScriptText>SetScriptText</a></td><td class=docright>
+Set engine script text (performs syntax checks)
+</td></tr>
+<tr><td class=docleft width=1%><a href=#ShutDown>ShutDown</a></td><td class=docright>
+Destroys script engine state.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#Started>Started</a></td><td class=docright>
+Returns whether or not the engine has started correctly.
+</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=AddBooleanParameter>
+<tr><td class=doctop colspan=2>Method AddBooleanParameter(value:Int)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Adds a boolean parameter to a LUA function call.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=AddFunction>
+<tr><td class=doctop colspan=2>Method AddFunction(func:Int(ls:Byte Ptr), name:String)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Adds a Function into the LUA environment.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=AddNumberParameter>
+<tr><td class=doctop colspan=2>Method AddNumberParameter(value:Double)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Adds a number parameter to a LUA function call.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=AddStringParameter>
+<tr><td class=doctop colspan=2>Method AddStringParameter(value:String)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Adds a string parameter to a LUA function call.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=BeginLUAFunctionCall>
+<tr><td class=doctop colspan=2>Method BeginLUAFunctionCall()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Performs initialization required for call a function in LUA.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=CallFunction>
+<tr><td class=doctop colspan=2>Method CallFunction:Int(functionName:String, wantResult:Int)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Calls a function in LUA.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=CheckNumber>
+<tr><td class=doctop colspan=2>Method CheckNumber:Double(index:Int)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Checks a number parameter and return its value.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=CheckString>
+<tr><td class=doctop colspan=2>Method CheckString:String(index:Int)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Checks a string parameter and return its value.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=GetLastErrorNumber>
+<tr><td class=doctop colspan=2>Method GetLastErrorNumber:Int()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Returns the last error number.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=GetLastErrorString>
+<tr><td class=doctop colspan=2>Method GetLastErrorString:String()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Returns the last error string.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=GetResultBoolean>
+<tr><td class=doctop colspan=2>Method GetResultBoolean:Int()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Get the result of a LUA function call as a boolean.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=GetResultNumber>
+<tr><td class=doctop colspan=2>Method GetResultNumber:Double()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Get the result of a LUA function call as a number.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=GetResultString>
+<tr><td class=doctop colspan=2>Method GetResultString:String()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Get the result of a LUA function call as a string.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=GetResultType>
+<tr><td class=doctop colspan=2>Method GetResultType:Int()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Tells the result type of a LUA function call.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=ProcessError>
+<tr><td class=doctop colspan=2>Method ProcessError (errorCode:Int)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Internal.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=Reset>
+<tr><td class=doctop colspan=2>Method Reset()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Resets the engine back to a start state.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=ReturnBooleanToLua>
+<tr><td class=doctop colspan=2>Method ReturnBooleanToLua(value:Int)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Returns a boolean back to LUA from a callback BMX function.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=ReturnNumberToLua>
+<tr><td class=doctop colspan=2>Method ReturnNumberToLua(value:Double)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Returns a number back to LUA from a callback BMX function.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=ReturnStringToLua>
+<tr><td class=doctop colspan=2>Method ReturnStringToLua(value:String)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Returns a string back to LUA from a callback BMX function.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=RunScript>
+<tr><td class=doctop colspan=2>Method RunScript:Int()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Runs a script loaded with SetScriptText.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=RunScriptFile>
+<tr><td class=doctop colspan=2>Method RunScriptFile:Int(scriptFile:String)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Runs a script file.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=SetScriptText>
+<tr><td class=doctop colspan=2>Method SetScriptText:Int(scriptText:String, scriptName:String)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Set engine script text (performs syntax checks)</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=ShutDown>
+<tr><td class=doctop colspan=2>Method ShutDown()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Destroys script engine state.</td></tr>
+</table>
+<table class=doc width=100% cellspacing=3 id=Started>
+<tr><td class=doctop colspan=2>Method Started:Int()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Returns whether or not the engine has started correctly.</td></tr>
+</table>
+<br>
+<h2 id=modinfo>Module Information</h2>
+<table width=100%>
+<tr><th width=1%>Version</th><td>1.15</td></tr>
+<tr><th width=1%>Author</th><td>Thomas Mayer</td></tr>
+<tr><th width=1%>License</th><td>Public Domain</td></tr>
+<tr><th width=1%>Modserver</th><td>BRL</td></tr>
+<tr><th width=1%>History</th><td>1.15 Release</td></tr>
+<tr><th width=1%>History</th><td>ScriptEngine -> TLuaScriptEngine</td></tr>
+<tr><th width=1%>History</th><td>changed lua_open to lua_Lnewstate for LUA 5.1</td></tr>
+<tr><th width=1%>History</th><td>disabled luaopen_io due to unknown problem</td></tr>
+<tr><th width=1%>History</th><td>removed lua_state parameters from numerous methods</td></tr>
+</body></html>

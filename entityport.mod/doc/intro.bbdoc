@@ -1,0 +1,14 @@
+The EntityPort module is based on a BlitzMax module and a Blitz3D daemon.
+<p>
+Current installation is non trivial so please expect some difficulties if the following instructions are inadequate:
+<p>
+1. Find and run the <a href=../runmefirst.bmx class=small>runmefirst.bmx file</a>.
+<p>
+2. Rebuild Modules
+<p>
+3. Prepare a project directory that you can test the module
+<p>
+3. Using Blitz3D load the entityconsole.bb daemon located <a href=../>here</a> and create an executable in your project directory
+<p>
+4. Copy the example below to your project directory and then try running it from BlitzMax
+<p>

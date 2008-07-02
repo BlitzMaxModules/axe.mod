@@ -1,0 +1,81 @@
+<html><head><title>EntityPort reference</title>
+<link rel=stylesheet Type=text/css href='../../../../doc/bmxstyle.css'>
+</head><body>
+<table width=100% cellspacing=0><tr align=center><td class=small>&nbsp;</td>
+<td class=small width=1%><b>axe.entityport:</b></td>
+<td class=small width=1%><a href=#functions class=small>Functions</a></td>
+<td class=small width=1%><a href=#modinfo class=small>Modinfo</a></td>
+<td class=small width=1%><a href='../../../../mod/axe.mod/entityport.mod/entityport.bmx' class=small>Source</a></td>
+<td class=small>&nbsp;</td></tr></table>
+<h1>EntityPort</h1>
+The EntityPort module is based on a BlitzMax module and a Blitz3D daemon.
+<p>
+Current installation is non trivial so please expect some difficulties if the following instructions are inadequate:
+<p>
+1. Find and run the <a href=../runmefirst.bmx class=small>runmefirst.bmx file</a>.
+<p>
+2. Rebuild Modules
+<p>
+3. Prepare a project directory that you can test the module
+<p>
+3. Using Blitz3D load the entityconsole.bb daemon located <a href=../>here</a> and create an executable in your project directory
+<p>
+4. Copy the example below to your project directory and then try running it from BlitzMax
+<p>
+<h2><a name=functions></a>Functions Summary</h2><table class=doc width=100%>
+<tr><td class=docleft width=1%><a href=#OpenEntityPort>OpenEntityPort</a></td><td class=docright>
+Useless?
+</td></tr>
+</table>
+<h2
+ id=functionsdet>Functions
+</h2>
+<table class=doc width=100% cellspacing=3 id=OpenEntityPort>
+<tr><td class=doctop colspan=2>Function OpenEntityPort()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Useless?</td></tr>
+<tr><td class=docleft width=1%><a href=OpenEntityPort.bmx class=small>Example</a></td><td class=docright><pre>' openentityport.bmx
+
+' test correct function of the entityconsole daemon
+
+Framework axe.entityport
+
+Import brl.system
+
+Strict
+
+OpenEntityPort
+
+Graphics3D(640,480,0,2)
+
+Local light=CreateLight(1,0)
+
+TurnEntity light,100,0,100,0
+
+Local cube=CreateCube(0)
+
+MoveEntity cube,0,0,10
+
+RotateEntity cube,10,100,1,0
+
+Local cam=CreateCamera(0)
+
+While Not KeyHit(1)
+	RenderWorld 1
+	Flip 1
+	TurnEntity cube,1,2,1,0
+Wend
+
+CloseEntityPort
+
+End</pre></td></tr>
+</table>
+<br>
+<h2 id=modinfo>Module Information</h2>
+<table width=100%>
+<tr><th width=1%>Version</th><td>0.01</td></tr>
+<tr><th width=1%>Author</th><td>Simon Armstrong</td></tr>
+<tr><th width=1%>License</th><td>Blitz Shared Source Code</td></tr>
+<tr><th width=1%>Copyright</th><td>Blitz Research Ltd</td></tr>
+<tr><th width=1%>Modserver</th><td>BRL</td></tr>
+<tr><th width=1%>History</th><td>0.01 Initial Release</td></tr>
+</body></html>
