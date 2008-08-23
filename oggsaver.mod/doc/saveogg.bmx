@@ -1,6 +1,6 @@
 ' saveogg.bmx
 
-Import axe.oggasver
+Import axe.oggsaver
 
 Local sample:TAudioSample=CreateAudioSample( 11025,11025,SF_MONO16LE )
 
