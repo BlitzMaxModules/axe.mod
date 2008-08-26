@@ -10,7 +10,7 @@ ModuleInfo "Authors: Guido van Rossum"
 ModuleInfo "License: Python Software Foundation License Version 2"
 ModuleInfo "Modserver: BRL"
 
-Import "libs/libpython24.a"
+'Import "libs/libpython24.a"
 
 Extern "C"
 Function Py_Initialize()

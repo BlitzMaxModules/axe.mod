@@ -3,7 +3,6 @@ ModuleInfo "Authors: Guido van Rossum"
 ModuleInfo "License: Python Software Foundation License Version 2"
 ModuleInfo "Modserver: BRL"
 import brl.blitz
-import "libs/libpython24.a"
 Py_Initialize%()="Py_Initialize"
 PyRun_SimpleString%(script$z)="PyRun_SimpleString"
 Py_InitModule4@*(name$z,methods@*,doc@*,PyObject@*,apiver%)="Py_InitModule4"
