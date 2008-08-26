@@ -1,0 +1,106 @@
+<html><head><title>Wiimote Driver for Windows and MacOS 10.4+ reference</title>
+<link rel=stylesheet Type=text/css href='../../../../doc/bmxstyle.css'>
+</head><body>
+<table width=100% cellspacing=0><tr align=center><td class=small>&nbsp;</td>
+<td class=small width=1%><b>axe.WiiMote:</b></td>
+<td class=small width=1%><a href=#functions class=small>Functions</a></td>
+<td class=small width=1%><a href=#modinfo class=small>Modinfo</a></td>
+<td class=small width=1%><a href='../../../../mod/axe.mod/wiimote.mod/wiimote.bmx' class=small>Source</a></td>
+<td class=small>&nbsp;</td></tr></table>
+<h1>Wiimote Driver for Windows and MacOS 10.4+</h1>
+Talk to Wiimotes with a bluetooth enabled PC.
+<h2><a name=functions></a>Functions Summary</h2><table class=doc width=100%>
+<tr><td class=docleft width=1%><a href=#CloseWiimotes>CloseWiimotes</a></td><td class=docright>
+Disconnects all Wiimotes.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#OpenWiimotes>OpenWiimotes</a></td><td class=docright>
+Listen for Wiimotes.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#PollWiimotes>PollWiimotes</a></td><td class=docright>
+Polls all connected Wiimotes.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#SetWiimoteLEDS>SetWiimoteLEDS</a></td><td class=docright>
+Set status of Wiimote LED display.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#SetWiimoteRumble>SetWiimoteRumble</a></td><td class=docright>
+Set status of Wiimote rumble motor.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#WiimoteAxis>WiimoteAxis</a></td><td class=docright>
+Return axis values.
+</td></tr>
+<tr><td class=docleft width=1%><a href=#WiimoteButton>WiimoteButton</a></td><td class=docright>
+Return button bits.
+</td></tr>
+</table>
+<h2
+ id=functionsdet>Functions
+</h2>
+<table class=doc width=100% cellspacing=3 id=CloseWiimotes>
+<tr><td class=doctop colspan=2>Function CloseWiimotes()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Disconnects all Wiimotes.</td></tr>
+</table>
+<br>
+<table class=doc width=100% cellspacing=3 id=OpenWiimotes>
+<tr><td class=doctop colspan=2>Function OpenWiimotes()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Listen for Wiimotes.</td></tr>
+<tr><td class=docleft width=1%>Information</td><td class=docright>May in future reset the library. Returns 0 if successful.</td></tr>
+<tr><td class=docleft width=1%><a href=OpenWiimotes.bmx class=small>Example</a></td><td class=docright><pre>Import axe.Wiimote
+
+Print "OpenWiimotes()="+OpenWiimotes()
+
+Local count,i,j
+
+While True
+	count=PollWiimotes()
+	Print "count="+count
+	For i=0 Until count*8
+		Print "~tbutton["+i+"]="+WiimoteButton(i)
+	Next
+	For i=0 Until count*32
+		Print "~taxiis["+i+"]="+WiimoteAxis(i)
+	Next
+	Delay 100
+Wend</pre></td></tr>
+</table>
+<br>
+<table class=doc width=100% cellspacing=3 id=PollWiimotes>
+<tr><td class=doctop colspan=2>Function PollWiimotes()</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Polls all connected Wiimotes.</td></tr>
+<tr><td class=docleft width=1%>Information</td><td class=docright>Returns current number of connected Wiimotes, call this
+function to capture the state of all Wiimotes before using
+the WiimoteButton and WiimoteAxis commands.</td></tr>
+</table>
+<br>
+<table class=doc width=100% cellspacing=3 id=SetWiimoteLEDS>
+<tr><td class=doctop colspan=2>Function SetWiimoteLEDS(wiimote_id,bits)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Set status of Wiimote LED display.</td></tr>
+</table>
+<br>
+<table class=doc width=100% cellspacing=3 id=SetWiimoteRumble>
+<tr><td class=doctop colspan=2>Function SetWiimoteRumble(wiimote_id,onoff)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Set status of Wiimote rumble motor.</td></tr>
+</table>
+<br>
+<table class=doc width=100% cellspacing=3 id=WiimoteAxis>
+<tr><td class=doctop colspan=2>Function WiimoteAxis:Float(axiis_id)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Return axis values.</td></tr>
+</table>
+<br>
+<table class=doc width=100% cellspacing=3 id=WiimoteButton>
+<tr><td class=doctop colspan=2>Function WiimoteButton(button_id)</td></tr>
+<tr><td class=docleft width=1%>Description</td><td class=docright>Return button bits.</td></tr>
+</table>
+<br>
+<h2 id=modinfo>Module Information</h2>
+<table width=100%>
+<tr><th width=1%>Version</th><td>1.01</td></tr>
+<tr><th width=1%>Author</th><td>wiiyourself  (c) 2007 gl.tter - http://wiiyourself.gl.tter.org</td></tr>
+<tr><th width=1%>Author</th><td>wiiremoteframework (c) 2006 Hiroaki Kimura</td></tr>
+<tr><th width=1%>Author</th><td>blitzmax glue - Simon Armstrong</td></tr>
+<tr><th width=1%>License</th><td>Public Domain</td></tr>
+<tr><th width=1%>Modserver</th><td>BRL</td></tr>
+<tr><th width=1%>History</th><td>1.01 Release</td></tr>
+<tr><th width=1%>History</th><td>Started MacOS wiiremoteframework support</td></tr>
+<tr><th width=1%>History</th><td>1.00 Release</td></tr>
+<tr><th width=1%>History</th><td>Initial release</td></tr>
+</body></html>

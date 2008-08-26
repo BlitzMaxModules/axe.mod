@@ -1,0 +1,87 @@
+____________________________________________________________
+
+  - WiiYourself! - native C++ Wiimote library  v0.99b.
+    (c) gl.tter 2007 - http://wiiyourself.gl.tter.org
+____________________________________________________________
+
+History:
+
+0.99b:
+    + added support for the Guitar Hero controller (thanks to Morgan Brown).
+       It's just a Classic Controller with a different ID and is read the same,
+       but can be differentiated via wiimote_state::extension_type::CLASSIC_GUITAR.
+
+0.96b:
+    + fix ClassicButtonNameFromBit[]
+    + fix WIIYOURSELF_VERSION_MINOR2
+
+0.95b:
+    + Classic Controller button fixes (thanks Farshid).
+    + sightly longer Sleep() in Reset() - hopefully fixes some reports of
+       wiimote acceleration values not working.
+    
+0.94b:
+    + deadzones weren't working.
+    
+0.93b:
+    + ** compiled libs are now stored in /libs **
+    + ** up to 4 dots are now available in every IR mode **
+    + some 'state_change_flags' weren't quite generated correctly.
+    - removed 'wiimote_state::polling' flags (redundant, flags are already
+       returned via RefreshState()).
+    + various internal improvements
+    
+0.92b:
+    ** Polling changes **
+      - now need to call RefreshState() once before each polling pass (see
+         header comments & demo). this was done to synchronise the threaded
+         state updates, so that data integrity is guaranteed.
+    ** Callback changes **
+      - combined 'wiimote_state_changed' and 'extension_state_changed' flags
+         into 'state_change_flags
+      - removed 'ExtensionChangedCallback' (only a single callback is used now)
+      - added 'CallbackTriggerFlags' to minimize callback overhead
+       (see header comments & demo)
+    + added Reset() (see header comments)
+    + button mask TRIGGER is now _B
+    
+    Demo: removed 'wiimote2' line (debug leftover)
+
+0.82b:
+    ** code/demo failed pre-XP (HID writes require XP+).  code now detects
+        HID write support dynamically. **
+    + tidied code & surpressed redundant warning (or just enable C++ exceptions).
+    + Improved debug output (mainly DEEP_TRACE)
+    + Connect() can now take (and defaults to) 'FIRST_AVAILABLE' as the wiimote
+      index (see header comments).
+    + 'wiimote_sample' is now auto-cleared on construction
+    + Adjusted max 'theoretical' raw IR coord values (1023x767) to largest
+       actually observed, to output full 0-1 float range.
+    + **Inverted** IR X float coord to match traditional 'left = 0' convention
+       (raw coords unaffected for now).
+    + Added state recording ability to aid state/motion analysis.  See RecordState();
+    - removed RequestBatteryUpdate() (battery level is now periodically refreshed)
+    - disabled ...CALIBRATION_CHANGED flags (not useful)
+    
+    Demo  : should now work pre-XP.
+    ReadMe: added Wiimote/PC installation notes (MS stack is especially tricky).
+
+0.81b:
+    + connection loss is now detected (via failed writes)
+      + ConnectionWasLost() added
+    + report modes renamed for clarity.
+    + Connect(): added 'force_hidwrites' (for testing only).
+    + Extension connections now seem to be reliable.
+    + Battery is now periodically refreshed (also used for loss detection)
+    + 'BatteryRaw' was set incorrectly
+    + added 'wiimote::ClassicButtonNameFromBit[]'
+
+    + Demo   : Classic Controller data shown.
+    + Demo   : IR dot sizes now reported when possible (only if extension 
+               data isn't requested as they're not available then).
+            
+    + License: 'no harm' clause added.
+    + ReadMe : added build notes etc.
+
+0.99b:
+    First release.
