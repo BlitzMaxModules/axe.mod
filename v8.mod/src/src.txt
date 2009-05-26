@@ -1,0 +1,91 @@
+ Volume in drive E is work
+ Volume Serial Number is 7409-7641
+
+ Directory of E:\simon\BlitzMax\mod\axe.mod\v8.mod\v8trunk\src
+
+26/05/2009  08:27 p.m.            16,348 accessors.cc
+26/05/2009  08:27 p.m.             5,893 allocation.cc
+26/05/2009  08:27 p.m.           113,825 api.cc
+26/05/2009  08:27 p.m.            19,478 assembler.cc
+26/05/2009  08:27 p.m.            15,387 ast.cc
+26/05/2009  08:27 p.m.            61,787 bootstrapper.cc
+26/05/2009  08:27 p.m.            24,912 builtins.cc
+26/05/2009  08:27 p.m.             4,011 checks.cc
+26/05/2009  08:27 p.m.             4,689 code-stubs.cc
+26/05/2009  08:27 p.m.            21,857 codegen.cc
+26/05/2009  08:27 p.m.            10,757 compilation-cache.cc
+26/05/2009  08:27 p.m.            14,954 compiler.cc
+26/05/2009  08:27 p.m.             9,535 contexts.cc
+26/05/2009  08:27 p.m.            22,795 conversions.cc
+26/05/2009  08:27 p.m.             2,962 counters.cc
+26/05/2009  08:27 p.m.            10,338 d8-debug.cc
+26/05/2009  08:27 p.m.            22,598 d8-posix.cc
+26/05/2009  08:27 p.m.             4,503 d8-readline.cc
+26/05/2009  08:27 p.m.             1,817 d8-windows.cc
+26/05/2009  08:27 p.m.            23,686 d8.cc
+26/05/2009  08:27 p.m.             6,347 dateparser.cc
+26/05/2009  08:27 p.m.            12,924 debug-agent.cc
+26/05/2009  08:27 p.m.            83,699 debug.cc
+26/05/2009  08:27 p.m.            11,449 disassembler.cc
+26/05/2009  08:27 p.m.            21,694 execution.cc
+26/05/2009  08:27 p.m.            32,722 factory.cc
+26/05/2009  08:27 p.m.            16,570 flags.cc
+26/05/2009  08:27 p.m.            23,966 frames.cc
+26/05/2009  08:27 p.m.             2,901 func-name-inferrer.cc
+26/05/2009  08:27 p.m.            11,723 global-handles.cc
+26/05/2009  08:27 p.m.            27,143 handles.cc
+26/05/2009  08:27 p.m.             6,542 hashmap.cc
+26/05/2009  08:27 p.m.           113,142 heap.cc
+26/05/2009  08:27 p.m.            44,593 ic.cc
+26/05/2009  08:27 p.m.            20,346 interpreter-irregexp.cc
+26/05/2009  08:27 p.m.           160,369 jsregexp.cc
+26/05/2009  08:27 p.m.            19,468 jump-target.cc
+26/05/2009  08:27 p.m.            40,542 log.cc
+26/05/2009  08:27 p.m.            65,900 mark-compact.cc
+26/05/2009  08:27 p.m.             6,883 messages.cc
+26/05/2009  08:27 p.m.             6,450 mksnapshot.cc
+26/05/2009  08:27 p.m.            31,300 objects-debug.cc
+26/05/2009  08:27 p.m.           257,052 objects.cc
+26/05/2009  08:27 p.m.             3,723 oprofile-agent.cc
+26/05/2009  08:27 p.m.           152,766 parser.cc
+26/05/2009  08:27 p.m.            17,447 platform-freebsd.cc
+26/05/2009  08:27 p.m.            19,691 platform-linux.cc
+26/05/2009  08:27 p.m.            15,478 platform-macos.cc
+26/05/2009  08:27 p.m.             8,697 platform-nullos.cc
+26/05/2009  08:27 p.m.             8,618 platform-posix.cc
+26/05/2009  08:27 p.m.            58,072 platform-win32.cc
+26/05/2009  08:27 p.m.            28,837 prettyprinter.cc
+26/05/2009  08:27 p.m.             3,506 property.cc
+26/05/2009  08:27 p.m.            13,235 regexp-macro-assembler-irregexp.cc
+26/05/2009  08:27 p.m.            13,697 regexp-macro-assembler-tracer.cc
+26/05/2009  08:27 p.m.             3,090 regexp-macro-assembler.cc
+26/05/2009  08:27 p.m.             3,357 regexp-stack.cc
+26/05/2009  08:27 p.m.             3,719 register-allocator.cc
+26/05/2009  08:27 p.m.            22,018 rewriter.cc
+26/05/2009  08:27 p.m.           241,491 runtime.cc
+26/05/2009  08:27 p.m.            25,435 scanner.cc
+26/05/2009  08:27 p.m.            18,296 scopeinfo.cc
+26/05/2009  08:27 p.m.            33,756 scopes.cc
+26/05/2009  08:27 p.m.            49,403 serialize.cc
+26/05/2009  08:27 p.m.             2,628 snapshot-common.cc
+26/05/2009  08:27 p.m.             1,856 snapshot-empty.cc
+26/05/2009  08:27 p.m.            86,403 spaces.cc
+26/05/2009  08:27 p.m.            17,543 string-stream.cc
+26/05/2009  08:27 p.m.            35,853 stub-cache.cc
+26/05/2009  08:27 p.m.             5,201 token.cc
+26/05/2009  08:27 p.m.            32,052 top.cc
+26/05/2009  08:27 p.m.           154,200 unicode.cc
+26/05/2009  08:27 p.m.            12,051 usage-analyzer.cc
+26/05/2009  08:27 p.m.             8,763 utils.cc
+26/05/2009  08:27 p.m.             2,230 v8-counters.cc
+26/05/2009  08:27 p.m.             4,025 v8.cc
+26/05/2009  08:27 p.m.            12,329 v8threads.cc
+26/05/2009  08:27 p.m.             4,883 variables.cc
+26/05/2009  08:27 p.m.             3,571 version.cc
+26/05/2009  08:27 p.m.            13,126 virtual-frame.cc
+26/05/2009  08:27 p.m.             6,936 zone.cc
+
+ Directory of E:\simon\BlitzMax\mod\axe.mod\v8.mod\v8trunk\src
+
+              81 File(s)      2,583,839 bytes
+               0 Dir(s)  11,945,197,568 bytes free
