@@ -11,11 +11,11 @@ extern "C" int v8main(char* script);
 
 int v8main(char *js) {
  
- // Create a stack-allocated handle scope.
-  HandleScope handle_scope;
+// Create a new context.
+  static Persistent<Context> context = Context::New();
 
-  // Create a new context.
-  Persistent<Context> context = Context::New();
+// Create a stack-allocated handle scope.
+  HandleScope handle_scope;
   
   // Enter the created context for compiling and
   // running the hello world script. 
