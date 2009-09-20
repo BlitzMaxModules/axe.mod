@@ -51,6 +51,7 @@ namespace internal {
 #define BUILTIN_LIST_A(V)                                      \
   V(ArgumentsAdaptorTrampoline, BUILTIN, UNINITIALIZED)        \
   V(JSConstructCall,            BUILTIN, UNINITIALIZED)        \
+  V(JSConstructStubGeneric,     BUILTIN, UNINITIALIZED)        \
   V(JSEntryTrampoline,          BUILTIN, UNINITIALIZED)        \
   V(JSConstructEntryTrampoline, BUILTIN, UNINITIALIZED)        \
                                                                \
@@ -89,7 +90,6 @@ namespace internal {
 // Define list of builtins used by the debugger implemented in assembly.
 #define BUILTIN_LIST_DEBUG_A(V)                                \
   V(Return_DebugBreak,          BUILTIN, DEBUG_BREAK)          \
-  V(Return_DebugBreakEntry,     BUILTIN, DEBUG_BREAK)          \
   V(ConstructCall_DebugBreak,   BUILTIN, DEBUG_BREAK)          \
   V(StubNoRegisters_DebugBreak, BUILTIN, DEBUG_BREAK)          \
   V(LoadIC_DebugBreak,          LOAD_IC, DEBUG_BREAK)          \
@@ -210,6 +210,7 @@ class Builtins : public AllStatic {
 
   static void Generate_Adaptor(MacroAssembler* masm, CFunctionId id);
   static void Generate_JSConstructCall(MacroAssembler* masm);
+  static void Generate_JSConstructStubGeneric(MacroAssembler* masm);
   static void Generate_JSEntryTrampoline(MacroAssembler* masm);
   static void Generate_JSConstructEntryTrampoline(MacroAssembler* masm);
   static void Generate_ArgumentsAdaptorTrampoline(MacroAssembler* masm);

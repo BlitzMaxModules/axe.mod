@@ -50,6 +50,12 @@ class ThreadState {
   void set_id(int id) { id_ = id; }
   int id() { return id_; }
 
+  // Should the thread be terminated when it is restored?
+  bool terminate_on_restore() { return terminate_on_restore_; }
+  void set_terminate_on_restore(bool terminate_on_restore) {
+    terminate_on_restore_ = terminate_on_restore;
+  }
+
   // Get data area for archiving a thread.
   char* data() { return data_; }
  private:
@@ -58,6 +64,7 @@ class ThreadState {
   void AllocateSpace();
 
   int id_;
+  bool terminate_on_restore_;
   char* data_;
   ThreadState* next_;
   ThreadState* previous_;
@@ -79,6 +86,7 @@ class ThreadManager : public AllStatic {
 
   static void ArchiveThread();
   static bool RestoreThread();
+  static bool IsArchived();
 
   static void Iterate(ObjectVisitor* v);
   static void MarkCompactPrologue(bool is_compacting);
@@ -87,12 +95,15 @@ class ThreadManager : public AllStatic {
 
   static int CurrentId();
   static void AssignId();
+  static bool HasId();
+
+  static void TerminateExecution(int thread_id);
 
   static const int kInvalidId = -1;
  private:
   static void EagerlyArchiveThread();
 
-  static int next_id_;  // V8 threads are identified through an integer.
+  static int last_id_;  // V8 threads are identified through an integer.
   static Mutex* mutex_;
   static ThreadHandle mutex_owner_;
   static ThreadHandle lazily_archived_thread_;

@@ -32,27 +32,21 @@
 #include "codegen.h"
 #include "register-allocator-inl.h"
 
+#if V8_TARGET_ARCH_IA32
+#include "ia32/codegen-ia32-inl.h"
+#elif V8_TARGET_ARCH_X64
+#include "x64/codegen-x64-inl.h"
+#elif V8_TARGET_ARCH_ARM
+#include "arm/codegen-arm-inl.h"
+#else
+#error Unsupported target architecture.
+#endif
+
+
 namespace v8 {
 namespace internal {
 
-
-void DeferredCode::SetEntryFrame(Result* arg) {
-  ASSERT(generator()->has_valid_frame());
-  generator()->frame()->Push(arg);
-  enter()->set_entry_frame(new VirtualFrame(generator()->frame()));
-  *arg = generator()->frame()->Pop();
-}
-
-
-void DeferredCode::SetEntryFrame(Result* arg0, Result* arg1) {
-  ASSERT(generator()->has_valid_frame());
-  generator()->frame()->Push(arg0);
-  generator()->frame()->Push(arg1);
-  enter()->set_entry_frame(new VirtualFrame(generator()->frame()));
-  *arg1 = generator()->frame()->Pop();
-  *arg0 = generator()->frame()->Pop();
-}
-
+#define __ ACCESS_MASM(masm_)
 
 // -----------------------------------------------------------------------------
 // Support for "structured" code comments.
@@ -64,15 +58,12 @@ void DeferredCode::SetEntryFrame(Result* arg0, Result* arg1) {
 
 class Comment BASE_EMBEDDED {
  public:
-  Comment(MacroAssembler* masm, const char* msg)
-    : masm_(masm),
-      msg_(msg) {
-    masm_->RecordComment(msg);
+  Comment(MacroAssembler* masm, const char* msg) : masm_(masm), msg_(msg) {
+    __ RecordComment(msg);
   }
 
   ~Comment() {
-    if (msg_[0] == '[')
-      masm_->RecordComment("]");
+    if (msg_[0] == '[') __ RecordComment("]");
   }
 
  private:
@@ -88,6 +79,8 @@ class Comment BASE_EMBEDDED {
 };
 
 #endif  // DEBUG
+
+#undef __
 
 
 } }  // namespace v8::internal

@@ -43,7 +43,7 @@ namespace internal {
 // as random access to the expression stack elements, locals, and
 // parameters.
 
-class VirtualFrame : public ZoneObject {
+class VirtualFrame: public ZoneObject {
  public:
   // A utility class to introduce a scope where the virtual frame is
   // expected to remain spilled.  The constructor spills the code
@@ -65,7 +65,7 @@ class VirtualFrame : public ZoneObject {
    private:
     bool previous_state_;
 
-    CodeGenerator* cgen() { return CodeGeneratorScope::Current(); }
+    CodeGenerator* cgen() {return CodeGeneratorScope::Current();}
   };
 
   // An illegal index into the virtual frame.
@@ -78,26 +78,39 @@ class VirtualFrame : public ZoneObject {
   explicit VirtualFrame(VirtualFrame* original);
 
   CodeGenerator* cgen() { return CodeGeneratorScope::Current(); }
+
   MacroAssembler* masm() { return cgen()->masm(); }
 
   // Create a duplicate of an existing valid frame element.
   FrameElement CopyElementAt(int index);
 
+  // The number of elements on the virtual frame.
+  int element_count() { return elements_.length(); }
+
   // The height of the virtual expression stack.
-  int height() {
-    return elements_.length() - expression_base_index();
+  int height() { return element_count() - expression_base_index(); }
+
+  int register_location(int num) {
+    ASSERT(num >= 0 && num < RegisterAllocator::kNumRegisters);
+    return register_locations_[num];
   }
 
-  int register_index(Register reg) {
-    return register_locations_[reg.code()];
+  int register_location(Register reg) {
+    return register_locations_[RegisterAllocator::ToNumber(reg)];
   }
 
-  bool is_used(int reg_code) {
-    return register_locations_[reg_code] != kIllegalIndex;
+  void set_register_location(Register reg, int index) {
+    register_locations_[RegisterAllocator::ToNumber(reg)] = index;
+  }
+
+  bool is_used(int num) {
+    ASSERT(num >= 0 && num < RegisterAllocator::kNumRegisters);
+    return register_locations_[num] != kIllegalIndex;
   }
 
   bool is_used(Register reg) {
-    return is_used(reg.code());
+    return register_locations_[RegisterAllocator::ToNumber(reg)]
+        != kIllegalIndex;
   }
 
   // Add extra in-memory elements to the top of the frame to match an actual
@@ -112,7 +125,7 @@ class VirtualFrame : public ZoneObject {
   // handler).  No code will be emitted.
   void Forget(int count) {
     ASSERT(count >= 0);
-    ASSERT(stack_pointer_ == elements_.length() - 1);
+    ASSERT(stack_pointer_ == element_count() - 1);
     stack_pointer_ -= count;
     ForgetElements(count);
   }
@@ -127,7 +140,7 @@ class VirtualFrame : public ZoneObject {
 
   // Spill all occurrences of a specific register from the frame.
   void Spill(Register reg) {
-    if (is_used(reg)) SpillElementAt(register_index(reg));
+    if (is_used(reg)) SpillElementAt(register_location(reg));
   }
 
   // Spill all occurrences of an arbitrary register if possible.  Return the
@@ -135,12 +148,12 @@ class VirtualFrame : public ZoneObject {
   // (ie, they all have frame-external references).
   Register SpillAnyRegister();
 
+  // Sync the range of elements in [begin, end] with memory.
+  void SyncRange(int begin, int end);
+
   // Make this frame so that an arbitrary frame of the same height can
-  // be merged to it.  Copies and constants are removed from the
-  // topmost mergable_elements elements of the frame.  A
-  // mergable_elements of JumpTarget::kAllElements indicates constants
-  // and copies are should be removed from the entire frame.
-  void MakeMergable(int mergable_elements);
+  // be merged to it.  Copies and constants are removed from the frame.
+  void MakeMergable();
 
   // Prepare this virtual frame for merging to an expected frame by
   // performing some state changes that do not require generating
@@ -158,11 +171,8 @@ class VirtualFrame : public ZoneObject {
   // one to NULL by an unconditional jump.
   void DetachFromCodeGenerator() {
     RegisterAllocator* cgen_allocator = cgen()->allocator();
-    for (int i = 0; i < kNumRegisters; i++) {
-      if (is_used(i)) {
-        Register temp = { i };
-        cgen_allocator->Unuse(temp);
-      }
+    for (int i = 0; i < RegisterAllocator::kNumRegisters; i++) {
+      if (is_used(i)) cgen_allocator->Unuse(i);
     }
   }
 
@@ -172,11 +182,8 @@ class VirtualFrame : public ZoneObject {
   // binding a label.
   void AttachToCodeGenerator() {
     RegisterAllocator* cgen_allocator = cgen()->allocator();
-    for (int i = 0; i < kNumRegisters; i++) {
-      if (is_used(i)) {
-        Register temp = { i };
-        cgen_allocator->Use(temp);
-      }
+    for (int i = 0; i < RegisterAllocator::kNumRegisters; i++) {
+      if (is_used(i)) cgen_allocator->Use(i);
     }
   }
 
@@ -211,11 +218,11 @@ class VirtualFrame : public ZoneObject {
   }
 
   void PushElementAt(int index) {
-    PushFrameSlotAt(elements_.length() - index - 1);
+    PushFrameSlotAt(element_count() - index - 1);
   }
 
   void StoreToElementAt(int index) {
-    StoreToFrameSlotAt(elements_.length() - index - 1);
+    StoreToFrameSlotAt(element_count() - index - 1);
   }
 
   // A frame-allocated local as an assembly operand.
@@ -247,7 +254,9 @@ class VirtualFrame : public ZoneObject {
   void PushReceiverSlotAddress();
 
   // Push the function on top of the frame.
-  void PushFunction() { PushFrameSlotAt(function_index()); }
+  void PushFunction() {
+    PushFrameSlotAt(function_index());
+  }
 
   // Save the value of the esi register to the context frame slot.
   void SaveContextRegister();
@@ -259,7 +268,7 @@ class VirtualFrame : public ZoneObject {
   // A parameter as an assembly operand.
   Operand ParameterAt(int index) {
     ASSERT(-1 <= index);  // -1 is the receiver.
-    ASSERT(index <= parameter_count());
+    ASSERT(index < parameter_count());
     return Operand(ebp, (1 + parameter_count() - index) * kPointerSize);
   }
 
@@ -282,7 +291,9 @@ class VirtualFrame : public ZoneObject {
   }
 
   // The receiver frame slot.
-  Operand Receiver() { return ParameterAt(-1); }
+  Operand Receiver() {
+    return ParameterAt(-1);
+  }
 
   // Push a try-catch or try-finally handler on top of the virtual frame.
   void PushTryHandler(HandlerType type);
@@ -312,9 +323,7 @@ class VirtualFrame : public ZoneObject {
 
   // Invoke builtin given the number of arguments it expects on (and
   // removes from) the stack.
-  Result InvokeBuiltin(Builtins::JavaScript id,
-                       InvokeFlag flag,
-                       int arg_count);
+  Result InvokeBuiltin(Builtins::JavaScript id, InvokeFlag flag, int arg_count);
 
   // Call load IC.  Name and receiver are found on top of the frame.
   // Receiver is not dropped.
@@ -349,10 +358,14 @@ class VirtualFrame : public ZoneObject {
   void Drop(int count);
 
   // Drop one element.
-  void Drop() { Drop(1); }
+  void Drop() {
+    Drop(1);
+  }
 
   // Duplicate the top element of the frame.
-  void Dup() { PushFrameSlotAt(elements_.length() - 1); }
+  void Dup() {
+    PushFrameSlotAt(element_count() - 1);
+  }
 
   // Pop an element from the top of the expression stack.  Returns a
   // Result, which may be a constant or a register.
@@ -370,15 +383,17 @@ class VirtualFrame : public ZoneObject {
   void EmitPush(Immediate immediate);
 
   // Push an element on the virtual frame.
-  void Push(Register reg, StaticType static_type = StaticType());
+  void Push(Register reg);
   void Push(Handle<Object> value);
-  void Push(Smi* value) { Push(Handle<Object>(value)); }
+  void Push(Smi* value) {
+    Push(Handle<Object> (value));
+  }
 
   // Pushing a result invalidates it (its contents become owned by the
   // frame).
   void Push(Result* result) {
     if (result->is_register()) {
-      Push(result->reg(), result->static_type());
+      Push(result->reg());
     } else {
       ASSERT(result->is_constant());
       Push(result->handle());
@@ -407,41 +422,57 @@ class VirtualFrame : public ZoneObject {
 
   // The index of the register frame element using each register, or
   // kIllegalIndex if a register is not on the frame.
-  int register_locations_[kNumRegisters];
+  int register_locations_[RegisterAllocator::kNumRegisters];
 
   // The number of frame-allocated locals and parameters respectively.
-  int parameter_count() { return cgen()->scope()->num_parameters(); }
-  int local_count() { return cgen()->scope()->num_stack_slots(); }
+  int parameter_count() {
+    return cgen()->scope()->num_parameters();
+  }
+  int local_count() {
+    return cgen()->scope()->num_stack_slots();
+  }
 
   // The index of the element that is at the processor's frame pointer
   // (the ebp register).  The parameters, receiver, and return address
   // are below the frame pointer.
-  int frame_pointer() { return parameter_count() + 2; }
+  int frame_pointer() {
+    return parameter_count() + 2;
+  }
 
   // The index of the first parameter.  The receiver lies below the first
   // parameter.
-  int param0_index() { return 1; }
+  int param0_index() {
+    return 1;
+  }
 
   // The index of the context slot in the frame.  It is immediately
   // above the frame pointer.
-  int context_index() { return frame_pointer() + 1; }
+  int context_index() {
+    return frame_pointer() + 1;
+  }
 
   // The index of the function slot in the frame.  It is above the frame
   // pointer and the context slot.
-  int function_index() { return frame_pointer() + 2; }
+  int function_index() {
+    return frame_pointer() + 2;
+  }
 
   // The index of the first local.  Between the frame pointer and the
   // locals lie the context and the function.
-  int local0_index() { return frame_pointer() + 3; }
+  int local0_index() {
+    return frame_pointer() + 3;
+  }
 
   // The index of the base of the expression stack.
-  int expression_base_index() { return local0_index() + local_count(); }
+  int expression_base_index() {
+    return local0_index() + local_count();
+  }
 
   // Convert a frame index into a frame pointer relative offset into the
   // actual stack.
   int fp_relative(int index) {
-    ASSERT(index < elements_.length());
-    ASSERT(frame_pointer() < elements_.length());  // FP is on the frame.
+    ASSERT(index < element_count());
+    ASSERT(frame_pointer() < element_count());  // FP is on the frame.
     return (frame_pointer() - index) * kPointerSize;
   }
 
@@ -450,7 +481,7 @@ class VirtualFrame : public ZoneObject {
   // of updating the index of the register's location in the frame.
   void Use(Register reg, int index) {
     ASSERT(!is_used(reg));
-    register_locations_[reg.code()] = index;
+    set_register_location(reg, index);
     cgen()->allocator()->Use(reg);
   }
 
@@ -458,8 +489,8 @@ class VirtualFrame : public ZoneObject {
   // decrements the register's external reference count and invalidates the
   // index of the register's location in the frame.
   void Unuse(Register reg) {
-    ASSERT(register_locations_[reg.code()] != kIllegalIndex);
-    register_locations_[reg.code()] = kIllegalIndex;
+    ASSERT(is_used(reg));
+    set_register_location(reg, kIllegalIndex);
     cgen()->allocator()->Unuse(reg);
   }
 
@@ -472,9 +503,6 @@ class VirtualFrame : public ZoneObject {
   // constant that disagrees with the value on the stack, write it to memory.
   // Keep the element type as register or constant, and clear the dirty bit.
   void SyncElementAt(int index);
-
-  // Sync the range of elements in [begin, end).
-  void SyncRange(int begin, int end);
 
   // Sync a single unsynced element that lies beneath or at the stack pointer.
   void SyncElementBelowStackPointer(int index);
@@ -537,9 +565,10 @@ class VirtualFrame : public ZoneObject {
 
   bool Equals(VirtualFrame* other);
 
+  // Classes that need raw access to the elements_ array.
+  friend class DeferredCode;
   friend class JumpTarget;
 };
-
 
 } }  // namespace v8::internal
 

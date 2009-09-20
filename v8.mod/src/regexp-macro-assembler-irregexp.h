@@ -31,6 +31,7 @@
 namespace v8 {
 namespace internal {
 
+#ifndef V8_NATIVE_REGEXP
 
 class RegExpMacroAssemblerIrregexp: public RegExpMacroAssembler {
  public:
@@ -52,7 +53,6 @@ class RegExpMacroAssemblerIrregexp: public RegExpMacroAssembler {
   // The byte-code interpreter checks on each push anyway.
   virtual int stack_limit_slack() { return 1; }
   virtual void Bind(Label* label);
-  virtual void EmitOrLink(Label* label);
   virtual void AdvanceCurrentPosition(int by);  // Signed cp change.
   virtual void PopCurrentPosition();
   virtual void PushCurrentPosition();
@@ -100,16 +100,6 @@ class RegExpMacroAssemblerIrregexp: public RegExpMacroAssembler {
                                int cp_offset,
                                Label* on_failure,
                                bool check_end_of_string);
-  virtual void CheckBitmap(uc16 start, Label* bitmap, Label* on_zero);
-  virtual void DispatchHalfNibbleMap(uc16 start,
-                                     Label* half_nibble_map,
-                                     const Vector<Label*>& destinations);
-  virtual void DispatchByteMap(uc16 start,
-                               Label* byte_map,
-                               const Vector<Label*>& destinations);
-  virtual void DispatchHighByteMap(byte start,
-                                   Label* byte_map,
-                                   const Vector<Label*>& destinations);
   virtual void IfRegisterLT(int register_index, int comparand, Label* if_lt);
   virtual void IfRegisterGE(int register_index, int comparand, Label* if_ge);
   virtual void IfRegisterEqPos(int register_index, Label* if_eq);
@@ -119,6 +109,7 @@ class RegExpMacroAssemblerIrregexp: public RegExpMacroAssembler {
  private:
   void Expand();
   // Code and bitmap emission.
+  inline void EmitOrLink(Label* label);
   inline void Emit32(uint32_t x);
   inline void Emit16(uint32_t x);
   inline void Emit(uint32_t bc, uint32_t arg);
@@ -142,6 +133,8 @@ class RegExpMacroAssemblerIrregexp: public RegExpMacroAssembler {
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(RegExpMacroAssemblerIrregexp);
 };
+
+#endif  // !V8_NATIVE_REGEXP
 
 } }  // namespace v8::internal
 

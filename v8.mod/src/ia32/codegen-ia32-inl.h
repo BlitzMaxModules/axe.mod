@@ -25,50 +25,32 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef V8_REGISTER_ALLOCATOR_INL_H_
-#define V8_REGISTER_ALLOCATOR_INL_H_
 
-#include "codegen.h"
-#include "register-allocator.h"
-#include "virtual-frame.h"
-
-#if V8_TARGET_ARCH_IA32
-#include "ia32/register-allocator-ia32-inl.h"
-#elif V8_TARGET_ARCH_X64
-#include "x64/register-allocator-x64-inl.h"
-#elif V8_TARGET_ARCH_ARM
-#include "arm/register-allocator-arm-inl.h"
-#else
-#error Unsupported target architecture.
-#endif
-
+#ifndef V8_IA32_CODEGEN_IA32_INL_H_
+#define V8_IA32_CODEGEN_IA32_INL_H_
 
 namespace v8 {
 namespace internal {
 
-Result::~Result() {
-  if (is_register()) {
-    CodeGeneratorScope::Current()->allocator()->Unuse(reg());
-  }
+#define __ ACCESS_MASM(masm_)
+
+// Platform-specific inline functions.
+
+void DeferredCode::Jump() { __ jmp(&entry_label_); }
+void DeferredCode::Branch(Condition cc) { __ j(cc, &entry_label_); }
+
+void CodeGenerator::GenerateMathSin(ZoneList<Expression*>* args) {
+  GenerateFastMathOp(SIN, args);
 }
 
 
-void Result::Unuse() {
-  if (is_register()) {
-    CodeGeneratorScope::Current()->allocator()->Unuse(reg());
-  }
-  invalidate();
+void CodeGenerator::GenerateMathCos(ZoneList<Expression*>* args) {
+  GenerateFastMathOp(COS, args);
 }
 
 
-void Result::CopyTo(Result* destination) const {
-  destination->value_ = value_;
-  if (is_register()) {
-    CodeGeneratorScope::Current()->allocator()->Use(reg());
-  }
-}
-
+#undef __
 
 } }  // namespace v8::internal
 
-#endif  // V8_REGISTER_ALLOCATOR_INL_H_
+#endif  // V8_IA32_CODEGEN_IA32_INL_H_

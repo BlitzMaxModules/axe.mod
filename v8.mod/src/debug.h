@@ -119,6 +119,8 @@ class BreakLocationIterator {
     return reloc_iterator_original_->rinfo()->rmode();
   }
 
+  bool IsDebuggerStatement();
+
  protected:
   bool RinfoDone() const;
   void RinfoNext();
@@ -128,6 +130,7 @@ class BreakLocationIterator {
   int position_;
   int statement_position_;
   Handle<DebugInfo> debug_info_;
+  Handle<Code> debug_break_stub_;
   RelocIterator* reloc_iterator_;
   RelocIterator* reloc_iterator_original_;
 
@@ -238,7 +241,10 @@ class Debug {
   // Returns whether the operation succeeded.
   static bool EnsureDebugInfo(Handle<SharedFunctionInfo> shared);
 
+  // Returns true if the current stub call is patched to call the debugger.
   static bool IsDebugBreak(Address addr);
+  // Returns true if the current return statement has been patched to be
+  // a debugger breakpoint.
   static bool IsDebugBreakAtReturn(RelocInfo* rinfo);
 
   // Check whether a code stub with the specified major key is a possible break
@@ -270,10 +276,14 @@ class Debug {
 
   static bool StepInActive() { return thread_local_.step_into_fp_ != 0; }
   static void HandleStepIn(Handle<JSFunction> function,
+                           Handle<Object> holder,
                            Address fp,
                            bool is_constructor);
   static Address step_in_fp() { return thread_local_.step_into_fp_; }
   static Address* step_in_fp_addr() { return &thread_local_.step_into_fp_; }
+
+  static bool StepOutActive() { return thread_local_.step_out_fp_ != 0; }
+  static Address step_out_fp() { return thread_local_.step_out_fp_; }
 
   static EnterDebugger* debugger_entry() {
     return thread_local_.debugger_entry_;
@@ -282,11 +292,19 @@ class Debug {
     thread_local_.debugger_entry_ = entry;
   }
 
-  static bool preemption_pending() {
-    return thread_local_.preemption_pending_;
+  // Check whether any of the specified interrupts are pending.
+  static bool is_interrupt_pending(InterruptFlag what) {
+    return (thread_local_.pending_interrupts_ & what) != 0;
   }
-  static void set_preemption_pending(bool preemption_pending) {
-    thread_local_.preemption_pending_ = preemption_pending;
+
+  // Set specified interrupts as pending.
+  static void set_interrupts_pending(InterruptFlag what) {
+    thread_local_.pending_interrupts_ |= what;
+  }
+
+  // Clear specified interrupts from pending.
+  static void clear_interrupt_pending(InterruptFlag what) {
+    thread_local_.pending_interrupts_ &= ~static_cast<int>(what);
   }
 
   // Getter and setter for the disable break state.
@@ -317,10 +335,8 @@ class Debug {
     return &registers_[r];
   }
 
-  // Address of the debug break return entry code.
-  static Code* debug_break_return_entry() { return debug_break_return_entry_; }
-
-  // Support for getting the address of the debug break on return code.
+  // Access to the debug break on return code.
+  static Code* debug_break_return() { return debug_break_return_; }
   static Code** debug_break_return_address() {
     return &debug_break_return_;
   }
@@ -355,6 +371,11 @@ class Debug {
   static const int kIa32CallInstructionLength = 5;
   static const int kIa32JSReturnSequenceLength = 6;
 
+  // The x64 JS return sequence is padded with int3 to make it large
+  // enough to hold a call instruction when the debugger patches it.
+  static const int kX64CallInstructionLength = 13;
+  static const int kX64JSReturnSequenceLength = 13;
+
   // Code generator routines.
   static void GenerateLoadICDebugBreak(MacroAssembler* masm);
   static void GenerateStoreICDebugBreak(MacroAssembler* masm);
@@ -362,7 +383,6 @@ class Debug {
   static void GenerateKeyedStoreICDebugBreak(MacroAssembler* masm);
   static void GenerateConstructCallDebugBreak(MacroAssembler* masm);
   static void GenerateReturnDebugBreak(MacroAssembler* masm);
-  static void GenerateReturnDebugBreakEntry(MacroAssembler* masm);
   static void GenerateStubNoRegistersDebugBreak(MacroAssembler* masm);
 
   // Called from stub-cache.cc.
@@ -373,6 +393,8 @@ class Debug {
   static void ClearOneShot();
   static void ActivateStepIn(StackFrame* frame);
   static void ClearStepIn();
+  static void ActivateStepOut(StackFrame* frame);
+  static void ClearStepOut();
   static void ClearStepNext();
   // Returns whether the compile succeeded.
   static bool EnsureCompiled(Handle<SharedFunctionInfo> shared);
@@ -425,23 +447,24 @@ class Debug {
     // Frame pointer for frame from which step in was performed.
     Address step_into_fp_;
 
+    // Frame pointer for the frame where debugger should be called when current
+    // step out action is completed.
+    Address step_out_fp_;
+
     // Storage location for jump when exiting debug break calls.
     Address after_break_target_;
 
     // Top debugger entry.
     EnterDebugger* debugger_entry_;
 
-    // Preemption happened while debugging.
-    bool preemption_pending_;
+    // Pending interrupts scheduled while debugging.
+    int pending_interrupts_;
   };
 
   // Storage location for registers when handling debug break calls
   static JSCallerSavedBuffer registers_;
   static ThreadLocal thread_local_;
   static void ThreadInit();
-
-  // Code object for debug break return entry code.
-  static Code* debug_break_return_entry_;
 
   // Code to call for handling debug break on return.
   static Code* debug_break_return_;
@@ -679,7 +702,8 @@ class EnterDebugger BASE_EMBEDDED {
   EnterDebugger()
       : prev_(Debug::debugger_entry()),
         has_js_frames_(!it_.done()) {
-    ASSERT(prev_ == NULL ? !Debug::preemption_pending() : true);
+    ASSERT(prev_ != NULL || !Debug::is_interrupt_pending(PREEMPT));
+    ASSERT(prev_ != NULL || !Debug::is_interrupt_pending(DEBUGBREAK));
 
     // Link recursive debugger entry.
     Debug::set_debugger_entry(this);
@@ -709,28 +733,41 @@ class EnterDebugger BASE_EMBEDDED {
     // Restore to the previous break state.
     Debug::SetBreak(break_frame_id_, break_id_);
 
-    // Request preemption when leaving the last debugger entry and a preemption
-    // had been recorded while debugging. This is to avoid starvation in some
-    // debugging scenarios.
-    if (prev_ == NULL && Debug::preemption_pending()) {
-      StackGuard::Preempt();
-      Debug::set_preemption_pending(false);
-    }
-
-    // If there are commands in the queue when leaving the debugger request that
-    // these commands are processed.
-    if (prev_ == NULL && Debugger::HasCommands()) {
-      StackGuard::DebugCommand();
-    }
-
+    // Check for leaving the debugger.
     if (prev_ == NULL) {
       // Clear mirror cache when leaving the debugger. Skip this if there is a
       // pending exception as clearing the mirror cache calls back into
       // JavaScript. This can happen if the v8::Debug::Call is used in which
       // case the exception should end up in the calling code.
       if (!Top::has_pending_exception()) {
+        // Try to avoid any pending debug break breaking in the clear mirror
+        // cache JavaScript code.
+        if (StackGuard::IsDebugBreak()) {
+          Debug::set_interrupts_pending(DEBUGBREAK);
+          StackGuard::Continue(DEBUGBREAK);
+        }
         Debug::ClearMirrorCache();
       }
+
+      // Request preemption and debug break when leaving the last debugger entry
+      // if any of these where recorded while debugging.
+      if (Debug::is_interrupt_pending(PREEMPT)) {
+        // This re-scheduling of preemption is to avoid starvation in some
+        // debugging scenarios.
+        Debug::clear_interrupt_pending(PREEMPT);
+        StackGuard::Preempt();
+      }
+      if (Debug::is_interrupt_pending(DEBUGBREAK)) {
+        Debug::clear_interrupt_pending(DEBUGBREAK);
+        StackGuard::DebugBreak();
+      }
+
+      // If there are commands in the queue when leaving the debugger request
+      // that these commands are processed.
+      if (Debugger::HasCommands()) {
+        StackGuard::DebugCommand();
+      }
+
       // If leaving the debugger with the debugger no longer active unload it.
       if (!Debugger::IsDebuggerActive()) {
         Debugger::UnloadDebugger();

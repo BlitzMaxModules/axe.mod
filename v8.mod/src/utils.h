@@ -114,8 +114,10 @@ static inline bool IsAligned(T value, T alignment) {
 
 
 // Returns true if (addr + offset) is aligned.
-static inline bool IsAddressAligned(Address addr, int alignment, int offset) {
-  int offs = OffsetFrom(addr + offset);
+static inline bool IsAddressAligned(Address addr,
+                                    intptr_t alignment,
+                                    int offset) {
+  intptr_t offs = OffsetFrom(addr + offset);
   return IsAligned(offs, alignment);
 }
 
@@ -362,6 +364,11 @@ class Vector {
     Sort(PointerValueCompare<T>);
   }
 
+  void Truncate(int length) {
+    ASSERT(length <= length_);
+    length_ = length;
+  }
+
   // Releases the array underlying this vector. Once disposed the
   // vector is empty.
   void Dispose() {
@@ -378,6 +385,9 @@ class Vector {
 
   // Factory method for creating empty vectors.
   static Vector<T> empty() { return Vector<T>(NULL, 0); }
+
+ protected:
+  void set_start(T* start) { start_ = start; }
 
  private:
   T* start_;
@@ -406,6 +416,22 @@ template <typename T, int kSize>
 class EmbeddedVector : public Vector<T> {
  public:
   EmbeddedVector() : Vector<T>(buffer_, kSize) { }
+
+  // When copying, make underlying Vector to reference our buffer.
+  EmbeddedVector(const EmbeddedVector& rhs)
+      : Vector<T>(rhs) {
+    memcpy(buffer_, rhs.buffer_, sizeof(T) * kSize);
+    set_start(buffer_);
+  }
+
+  EmbeddedVector& operator=(const EmbeddedVector& rhs) {
+    if (this == &rhs) return *this;
+    Vector<T>::operator=(rhs);
+    memcpy(buffer_, rhs.buffer_, sizeof(T) * kSize);
+    set_start(buffer_);
+    return *this;
+  }
+
  private:
   T buffer_[kSize];
 };
@@ -422,15 +448,15 @@ class ScopedVector : public Vector<T> {
 
 
 inline Vector<const char> CStrVector(const char* data) {
-  return Vector<const char>(data, strlen(data));
+  return Vector<const char>(data, static_cast<int>(strlen(data)));
 }
 
 inline Vector<char> MutableCStrVector(char* data) {
-  return Vector<char>(data, strlen(data));
+  return Vector<char>(data, static_cast<int>(strlen(data)));
 }
 
 inline Vector<char> MutableCStrVector(char* data, int max) {
-  int length = strlen(data);
+  int length = static_cast<int>(strlen(data));
   return Vector<char>(data, (length < max) ? length : max);
 }
 

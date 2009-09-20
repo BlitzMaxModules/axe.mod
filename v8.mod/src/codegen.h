@@ -52,7 +52,6 @@
 //   CodeGenerator
 //   ~CodeGenerator
 //   ProcessDeferred
-//   ClearDeferred
 //   GenCode
 //   BuildBoilerplate
 //   ComputeCallInitialize
@@ -62,12 +61,6 @@
 //   FindInlineRuntimeLUT
 //   CheckForInlineRuntimeCall
 //   PatchInlineRuntimeEntry
-//   GenerateFastCaseSwitchStatement
-//   GenerateFastCaseSwitchCases
-//   TryGenerateFastCaseSwitchStatement
-//   GenerateFastCaseSwitchJumpTable
-//   FastCaseSwitchMinCaseCount
-//   FastCaseSwitchMaxOverheadFactor
 //   CodeForFunctionPosition
 //   CodeForReturnPosition
 //   CodeForStatementPosition
@@ -77,6 +70,9 @@
 // Mode to overwrite BinaryExpression values.
 enum OverwriteMode { NO_OVERWRITE, OVERWRITE_LEFT, OVERWRITE_RIGHT };
 
+// Types of uncatchable exceptions.
+enum UncatchableExceptionType { OUT_OF_MEMORY, TERMINATION };
+
 
 #if V8_TARGET_ARCH_IA32
 #include "ia32/codegen-ia32.h"
@@ -84,6 +80,8 @@ enum OverwriteMode { NO_OVERWRITE, OVERWRITE_LEFT, OVERWRITE_RIGHT };
 #include "x64/codegen-x64.h"
 #elif V8_TARGET_ARCH_ARM
 #include "arm/codegen-arm.h"
+#else
+#error Unsupported target architecture.
 #endif
 
 #include "register-allocator.h"
@@ -116,72 +114,61 @@ class CodeGeneratorScope BASE_EMBEDDED {
 };
 
 
-// Use lazy compilation; defaults to true.
-// NOTE: Do not remove non-lazy compilation until we can properly
-//       install extensions with lazy compilation enabled. At the
-//       moment, this doesn't work for the extensions in Google3,
-//       and we can only run the tests with --nolazy.
-
-
 // Deferred code objects are small pieces of code that are compiled
 // out of line. They are used to defer the compilation of uncommon
 // paths thereby avoiding expensive jumps around uncommon code parts.
 class DeferredCode: public ZoneObject {
  public:
-  explicit DeferredCode(CodeGenerator* generator);
+  DeferredCode();
   virtual ~DeferredCode() { }
 
   virtual void Generate() = 0;
 
-  // Unuse the entry and exit targets, deallocating all virtual frames
-  // held by them.  It will be impossible to emit a (correct) jump
-  // into or out of the deferred code after clearing.
-  void Clear() {
-    enter_.Unuse();
-    exit_.Unuse();
-  }
-
-  MacroAssembler* masm() const { return masm_; }
-  CodeGenerator* generator() const { return generator_; }
-
-  // Set the virtual frame for entry to the deferred code as a
-  // snapshot of the code generator's current frame (plus additional
-  // results).  This is optional, but should be done before branching
-  // or jumping to the deferred code.
-  inline void SetEntryFrame(Result* arg);
-  inline void SetEntryFrame(Result* arg0, Result* arg1);
-
-  JumpTarget* enter() { return &enter_; }
-
-  void BindExit() { exit_.Bind(0); }
-  void BindExit(Result* result) { exit_.Bind(result, 1); }
-  void BindExit(Result* result0, Result* result1) {
-    exit_.Bind(result0, result1, 2);
-  }
-  void BindExit(Result* result0, Result* result1, Result* result2) {
-    exit_.Bind(result0, result1, result2, 3);
-  }
+  MacroAssembler* masm() { return masm_; }
 
   int statement_position() const { return statement_position_; }
   int position() const { return position_; }
+
+  Label* entry_label() { return &entry_label_; }
+  Label* exit_label() { return &exit_label_; }
 
 #ifdef DEBUG
   void set_comment(const char* comment) { comment_ = comment; }
   const char* comment() const { return comment_; }
 #else
-  inline void set_comment(const char* comment) { }
+  void set_comment(const char* comment) { }
   const char* comment() const { return ""; }
 #endif
 
+  inline void Jump();
+  inline void Branch(Condition cc);
+  void BindExit() { masm_->bind(&exit_label_); }
+
+  void SaveRegisters();
+  void RestoreRegisters();
+
  protected:
-  CodeGenerator* const generator_;
-  MacroAssembler* const masm_;
-  JumpTarget enter_;
-  JumpTarget exit_;
+  MacroAssembler* masm_;
 
  private:
+  // Constants indicating special actions.  They should not be multiples
+  // of kPointerSize so they will not collide with valid offsets from
+  // the frame pointer.
+  static const int kIgnore = -1;
+  static const int kPush = 1;
+
+  // This flag is ored with a valid offset from the frame pointer, so
+  // it should fit in the low zero bits of a valid offset.
+  static const int kSyncedFlag = 2;
+
   int statement_position_;
   int position_;
+
+  Label entry_label_;
+  Label exit_label_;
+
+  int registers_[RegisterAllocator::kNumRegisters];
+
 #ifdef DEBUG
   const char* comment_;
 #endif
@@ -240,22 +227,66 @@ class StackCheckStub : public CodeStub {
 };
 
 
-class UnarySubStub : public CodeStub {
+class InstanceofStub: public CodeStub {
  public:
-  UnarySubStub() { }
+  InstanceofStub() { }
+
+  void Generate(MacroAssembler* masm);
 
  private:
-  Major MajorKey() { return UnarySub; }
+  Major MajorKey() { return Instanceof; }
   int MinorKey() { return 0; }
+};
+
+
+class UnarySubStub : public CodeStub {
+ public:
+  explicit UnarySubStub(bool overwrite)
+      : overwrite_(overwrite) { }
+
+ private:
+  bool overwrite_;
+  Major MajorKey() { return UnarySub; }
+  int MinorKey() { return overwrite_ ? 1 : 0; }
   void Generate(MacroAssembler* masm);
 
   const char* GetName() { return "UnarySubStub"; }
 };
 
 
+class CompareStub: public CodeStub {
+ public:
+  CompareStub(Condition cc, bool strict) : cc_(cc), strict_(strict) { }
+
+  void Generate(MacroAssembler* masm);
+
+ private:
+  Condition cc_;
+  bool strict_;
+
+  Major MajorKey() { return Compare; }
+
+  int MinorKey();
+
+  // Branch to the label if the given object isn't a symbol.
+  void BranchIfNonSymbol(MacroAssembler* masm,
+                         Label* label,
+                         Register object,
+                         Register scratch);
+
+#ifdef DEBUG
+  void Print() {
+    PrintF("CompareStub (cc %d), (strict %s)\n",
+           static_cast<int>(cc_),
+           strict_ ? "true" : "false");
+  }
+#endif
+};
+
+
 class CEntryStub : public CodeStub {
  public:
-  CEntryStub() { }
+  explicit CEntryStub(int result_size) : result_size_(result_size) { }
 
   void Generate(MacroAssembler* masm) { GenerateBody(masm, false); }
 
@@ -263,16 +294,22 @@ class CEntryStub : public CodeStub {
   void GenerateBody(MacroAssembler* masm, bool is_debug_break);
   void GenerateCore(MacroAssembler* masm,
                     Label* throw_normal_exception,
+                    Label* throw_termination_exception,
                     Label* throw_out_of_memory_exception,
                     StackFrame::Type frame_type,
                     bool do_gc,
                     bool always_allocate_scope);
   void GenerateThrowTOS(MacroAssembler* masm);
-  void GenerateThrowOutOfMemory(MacroAssembler* masm);
-
+  void GenerateThrowUncatchable(MacroAssembler* masm,
+                                UncatchableExceptionType type);
  private:
+  // Number of pointers/values returned.
+  int result_size_;
+
   Major MajorKey() { return CEntry; }
-  int MinorKey() { return 0; }
+  // Minor key must differ if different result_size_ values means different
+  // code is generated.
+  int MinorKey();
 
   const char* GetName() { return "CEntryStub"; }
 };
@@ -280,7 +317,7 @@ class CEntryStub : public CodeStub {
 
 class CEntryDebugBreakStub : public CEntryStub {
  public:
-  CEntryDebugBreakStub() { }
+  CEntryDebugBreakStub() : CEntryStub(1) { }
 
   void Generate(MacroAssembler* masm) { GenerateBody(masm, true); }
 

@@ -244,9 +244,10 @@ v8::internal::Handle<T> v8::internal::Handle<T>::EscapeFrom(
 
 // Implementations of ToLocal
 
-#define MAKE_TO_LOCAL(Name, From, To) \
+#define MAKE_TO_LOCAL(Name, From, To)                                       \
   Local<v8::To> Utils::Name(v8::internal::Handle<v8::internal::From> obj) { \
-    return Local<To>(reinterpret_cast<To*>(obj.location())); \
+    ASSERT(!obj->IsTheHole());                                              \
+    return Local<To>(reinterpret_cast<To*>(obj.location()));                \
   }
 
 MAKE_TO_LOCAL(ToLocal, Context, Context)
@@ -337,7 +338,7 @@ class HandleScopeImplementer {
   static char* Iterate(v8::internal::ObjectVisitor* v, char* data);
 
 
-  inline void** GetSpareOrNewBlock();
+  inline internal::Object** GetSpareOrNewBlock();
   inline void DeleteExtensions(int extensions);
 
   inline void IncrementCallDepth() {call_depth++;}
@@ -351,30 +352,28 @@ class HandleScopeImplementer {
   // contexts have been entered.
   inline Handle<Object> LastEnteredContext();
 
-  inline void SaveContext(Handle<Object> context);
-  inline Handle<Object> RestoreContext();
+  inline void SaveContext(Context* context);
+  inline Context* RestoreContext();
   inline bool HasSavedContexts();
 
-  inline List<void**>* Blocks() { return &blocks; }
+  inline List<internal::Object**>* Blocks() { return &blocks; }
 
   inline bool IgnoreOutOfMemory() { return ignore_out_of_memory; }
   inline void SetIgnoreOutOfMemory(bool value) { ignore_out_of_memory = value; }
 
  private:
-  List<void**> blocks;
+  List<internal::Object**> blocks;
   Object** spare;
   int call_depth;
   // Used as a stack to keep track of entered contexts.
   List<Handle<Object> > entered_contexts_;
   // Used as a stack to keep track of saved contexts.
-  List<Handle<Object> > saved_contexts_;
+  List<Context*> saved_contexts_;
   bool ignore_out_of_memory;
   // This is only used for threading support.
   v8::ImplementationUtilities::HandleScopeData handle_scope_data_;
 
-  static void Iterate(ObjectVisitor* v,
-      List<void**>* blocks,
-      v8::ImplementationUtilities::HandleScopeData* handle_data);
+  void IterateThis(ObjectVisitor* v);
   char* RestoreThreadHelper(char* from);
   char* ArchiveThreadHelper(char* to);
 
@@ -385,12 +384,12 @@ class HandleScopeImplementer {
 static const int kHandleBlockSize = v8::internal::KB - 2;  // fit in one page
 
 
-void HandleScopeImplementer::SaveContext(Handle<Object> context) {
+void HandleScopeImplementer::SaveContext(Context* context) {
   saved_contexts_.Add(context);
 }
 
 
-Handle<Object> HandleScopeImplementer::RestoreContext() {
+Context* HandleScopeImplementer::RestoreContext() {
   return saved_contexts_.RemoveLast();
 }
 
@@ -419,10 +418,10 @@ Handle<Object> HandleScopeImplementer::LastEnteredContext() {
 
 
 // If there's a spare block, use it for growing the current scope.
-void** HandleScopeImplementer::GetSpareOrNewBlock() {
-  void** block = (spare != NULL) ?
-      reinterpret_cast<void**>(spare) :
-      NewArray<void*>(kHandleBlockSize);
+internal::Object** HandleScopeImplementer::GetSpareOrNewBlock() {
+  internal::Object** block = (spare != NULL) ?
+      spare :
+      NewArray<internal::Object*>(kHandleBlockSize);
   spare = NULL;
   return block;
 }
@@ -434,18 +433,18 @@ void HandleScopeImplementer::DeleteExtensions(int extensions) {
     spare = NULL;
   }
   for (int i = extensions; i > 1; --i) {
-    void** block = blocks.RemoveLast();
+    internal::Object** block = blocks.RemoveLast();
 #ifdef DEBUG
     v8::ImplementationUtilities::ZapHandleRange(block,
                                                 &block[kHandleBlockSize]);
 #endif
     DeleteArray(block);
   }
-  spare = reinterpret_cast<Object**>(blocks.RemoveLast());
+  spare = blocks.RemoveLast();
 #ifdef DEBUG
   v8::ImplementationUtilities::ZapHandleRange(
-      reinterpret_cast<void**>(spare),
-      reinterpret_cast<void**>(&spare[kHandleBlockSize]));
+      spare,
+      &spare[kHandleBlockSize]);
 #endif
 }
 

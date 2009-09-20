@@ -93,17 +93,21 @@ Address Page::AllocationTop() {
 
 
 void Page::ClearRSet() {
-#ifndef V8_HOST_ARCH_64_BIT
   // This method can be called in all rset states.
   memset(RSetStart(), 0, kRSetEndOffset - kRSetStartOffset);
-#endif
 }
 
 
-// Give an address a (32-bits):
+// Given a 32-bit address, separate its bits into:
 // | page address | words (6) | bit offset (5) | pointer alignment (2) |
-// The rset address is computed as:
+// The address of the rset word containing the bit for this word is computed as:
 //    page_address + words * 4
+// For a 64-bit address, if it is:
+// | page address | words(5) | bit offset(5) | pointer alignment (3) |
+// The address of the rset word containing the bit for this word is computed as:
+//    page_address + words * 4 + kRSetOffset.
+// The rset is accessed as 32-bit words, and bit offsets in a 32-bit word,
+// even on the X64 architecture.
 
 Address Page::ComputeRSetBitPosition(Address address, int offset,
                                      uint32_t* bitmask) {
@@ -111,11 +115,11 @@ Address Page::ComputeRSetBitPosition(Address address, int offset,
 
   Page* page = Page::FromAddress(address);
   uint32_t bit_offset = ArithmeticShiftRight(page->Offset(address) + offset,
-                                             kObjectAlignmentBits);
+                                             kPointerSizeLog2);
   *bitmask = 1 << (bit_offset % kBitsPerInt);
 
   Address rset_address =
-      page->address() + (bit_offset / kBitsPerInt) * kIntSize;
+      page->address() + kRSetOffset + (bit_offset / kBitsPerInt) * kIntSize;
   // The remembered set address is either in the normal remembered set range
   // of a page or else we have a large object page.
   ASSERT((page->RSetStart() <= rset_address && rset_address < page->RSetEnd())
@@ -123,18 +127,19 @@ Address Page::ComputeRSetBitPosition(Address address, int offset,
 
   if (rset_address >= page->RSetEnd()) {
     // We have a large object page, and the remembered set address is actually
-    // past the end of the object.  The address of the remembered set in this
-    // case is the extra remembered set start address at the address of the
-    // end of the object:
+    // past the end of the object.
+
+    // The first part of the remembered set is still located at the start of
+    // the page, but anything after kRSetEndOffset must be relocated to after
+    // the large object, i.e. after
     //   (page->ObjectAreaStart() + object size)
-    // plus the offset of the computed remembered set address from the start
-    // of the object:
-    //   (rset_address - page->ObjectAreaStart()).
-    // Ie, we can just add the object size.
+    // We do that by adding the difference between the normal RSet's end and
+    // the object's end.
     ASSERT(HeapObject::FromAddress(address)->IsFixedArray());
-    rset_address +=
+    int fixedarray_length =
         FixedArray::SizeFor(Memory::int_at(page->ObjectAreaStart()
                                            + Array::kLengthOffset));
+    rset_address += kObjectStartOffset - kRSetEndOffset + fixedarray_length;
   }
   return rset_address;
 }
@@ -160,14 +165,9 @@ void Page::UnsetRSet(Address address, int offset) {
 
 
 bool Page::IsRSetSet(Address address, int offset) {
-#ifdef V8_HOST_ARCH_64_BIT
-  // TODO(X64): Reenable when RSet works.
-  return true;
-#else  // V8_HOST_ARCH_64_BIT
   uint32_t bitmask = 0;
   Address rset_address = ComputeRSetBitPosition(address, offset, &bitmask);
   return (Memory::uint32_at(rset_address) & bitmask) != 0;
-#endif  // V8_HOST_ARCH_64_BIT
 }
 
 

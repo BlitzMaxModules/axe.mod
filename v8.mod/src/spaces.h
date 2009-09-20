@@ -93,13 +93,17 @@ class AllocationInfo;
 // bytes are used as remembered set, and the rest of the page is the object
 // area.
 //
-// Pointers are aligned to the pointer size (4 bytes), only 1 bit is needed
+// Pointers are aligned to the pointer size (4), only 1 bit is needed
 // for a pointer in the remembered set. Given an address, its remembered set
 // bit position (offset from the start of the page) is calculated by dividing
 // its page offset by 32. Therefore, the object area in a page starts at the
 // 256th byte (8K/32). Bytes 0 to 255 do not need the remembered set, so that
 // the first two words (64 bits) in a page can be used for other purposes.
-// TODO(X64): This description only represents the 32-bit layout.
+//
+// On the 64-bit platform, we add an offset to the start of the remembered set,
+// and pointers are aligned to 8-byte pointer size. This means that we need
+// only 128 bytes for the RSet, and only get two bytes free in the RSet's RSet.
+// For this reason we add an offset to get room for the Page data at the start.
 //
 // The mark-compact collector transforms a map pointer into a page index and a
 // page offset. The map space can have up to 1024 pages, and 8M bytes (1024 *
@@ -117,7 +121,7 @@ class Page {
   // from [page_addr .. page_addr + kPageSize[
   //
   // Note that this function only works for addresses in normal paged
-  // spaces and addresses in the first 8K of large object pages (ie,
+  // spaces and addresses in the first 8K of large object pages (i.e.,
   // the start of large objects but not necessarily derived pointers
   // within them).
   INLINE(static Page* FromAddress(Address a)) {
@@ -217,15 +221,25 @@ class Page {
   // Page size mask.
   static const intptr_t kPageAlignmentMask = (1 << kPageSizeBits) - 1;
 
+  // The offset of the remembered set in a page, in addition to the empty bytes
+  // formed as the remembered bits of the remembered set itself.
+#ifdef V8_TARGET_ARCH_X64
+  static const int kRSetOffset = 4 * kPointerSize;  // Room for four pointers.
+#else
+  static const int kRSetOffset = 0;
+#endif
   // The end offset of the remembered set in a page
   // (heaps are aligned to pointer size).
-  static const int kRSetEndOffset= kPageSize / kBitsPerPointer;
-
-  // The start offset of the remembered set in a page.
-  static const int kRSetStartOffset = kRSetEndOffset / kBitsPerPointer;
+  static const int kRSetEndOffset = kRSetOffset + kPageSize / kBitsPerPointer;
 
   // The start offset of the object area in a page.
-  static const int kObjectStartOffset = kRSetEndOffset;
+  // This needs to be at least (bits per uint32_t) * kBitsPerPointer,
+  // to align start of rset to a uint32_t address.
+  static const int kObjectStartOffset = 256;
+
+  // The start offset of the used part of the remembered set in a page.
+  static const int kRSetStartOffset = kRSetOffset +
+      kObjectStartOffset / kBitsPerPointer;
 
   // Object area size in bytes.
   static const int kObjectAreaSize = kPageSize - kObjectStartOffset;
@@ -253,15 +267,15 @@ class Page {
   // low-order bit for large object pages will be cleared.
   int is_normal_page;
 
-  // The following fields overlap with remembered set, they can only
+  // The following fields may overlap with remembered set, they can only
   // be used in the mark-compact collector when remembered set is not
   // used.
 
-  // The allocation pointer after relocating objects to this page.
-  Address mc_relocation_top;
-
   // The index of the page in its owner space.
   int mc_page_index;
+
+  // The allocation pointer after relocating objects to this page.
+  Address mc_relocation_top;
 
   // The forwarding address of the first live object in this page.
   Address mc_first_forwarded;
@@ -291,7 +305,6 @@ class Space : public Malloced {
   virtual int Size() = 0;
 
 #ifdef DEBUG
-  virtual void Verify() = 0;
   virtual void Print() = 0;
 #endif
 
@@ -354,6 +367,13 @@ class MemoryAllocator : public AllStatic {
   // and false otherwise.
   static bool CommitBlock(Address start, size_t size, Executability executable);
 
+
+  // Uncommit a contiguous block of memory [start..(start+size)[.
+  // start is not NULL, the size is greater than zero, and the
+  // block is contained in the initial chunk.  Returns true if it succeeded
+  // and false otherwise.
+  static bool UncommitBlock(Address start, size_t size);
+
   // Attempts to allocate the requested (non-zero) number of pages from the
   // OS.  Fewer pages might be allocated than requested. If it fails to
   // allocate memory for the OS or cannot allocate a single page, this
@@ -382,6 +402,9 @@ class MemoryAllocator : public AllStatic {
 
   // Returns the maximum available bytes of heaps.
   static int Available() { return capacity_ < size_ ? 0 : capacity_ - size_; }
+
+  // Returns allocated spaces in bytes.
+  static int Size() { return size_; }
 
   // Returns maximum available bytes that the old space can have.
   static int MaxAvailable() {
@@ -422,9 +445,13 @@ class MemoryAllocator : public AllStatic {
 
   // Due to encoding limitation, we can only have 8K chunks.
   static const int kMaxNofChunks = 1 << Page::kPageSizeBits;
-  // If a chunk has at least 32 pages, the maximum heap size is about
-  // 8 * 1024 * 32 * 8K = 2G bytes.
-  static const int kPagesPerChunk = 64;
+  // If a chunk has at least 16 pages, the maximum heap size is about
+  // 8K * 8K * 16 = 1G bytes.
+#ifdef V8_TARGET_ARCH_X64
+  static const int kPagesPerChunk = 32;
+#else
+  static const int kPagesPerChunk = 16;
+#endif
   static const int kChunkSize = kPagesPerChunk * Page::kPageSize;
 
  private:
@@ -825,6 +852,13 @@ class PagedSpace : public Space {
   // Print meta info and objects in this space.
   virtual void Print();
 
+  // Verify integrity of this space.
+  virtual void Verify(ObjectVisitor* visitor);
+
+  // Overridden by subclasses to verify space-specific object
+  // properties (e.g., only maps or free-list nodes are in map space).
+  virtual void VerifyObject(HeapObject* obj) {}
+
   // Report code object related statistics
   void CollectCodeStatistics();
   static void ReportCodeStatistics();
@@ -850,6 +884,12 @@ class PagedSpace : public Space {
 
   // Relocation information during mark-compact collections.
   AllocationInfo mc_forwarding_info_;
+
+  // Bytes of each page that cannot be allocated.  Possibly non-zero
+  // for pages in spaces with only fixed-size objects.  Always zero
+  // for pages in spaces with variable sized objects (those pages are
+  // padded with free-list nodes).
+  int page_extra_;
 
   // Sets allocation pointer to a page bottom.
   static void SetAllocationInfo(AllocationInfo* alloc_info, Page* p);
@@ -901,33 +941,40 @@ class PagedSpace : public Space {
 
 
 #if defined(DEBUG) || defined(ENABLE_LOGGING_AND_PROFILING)
-// HistogramInfo class for recording a single "bar" of a histogram.  This
-// class is used for collecting statistics to print to stdout (when compiled
-// with DEBUG) or to the log file (when compiled with
-// ENABLE_LOGGING_AND_PROFILING).
-class HistogramInfo BASE_EMBEDDED {
+class NumberAndSizeInfo BASE_EMBEDDED {
  public:
-  HistogramInfo() : number_(0), bytes_(0) {}
+  NumberAndSizeInfo() : number_(0), bytes_(0) {}
 
-  const char* name() { return name_; }
-  void set_name(const char* name) { name_ = name; }
-
-  int number() { return number_; }
+  int number() const { return number_; }
   void increment_number(int num) { number_ += num; }
 
-  int bytes() { return bytes_; }
+  int bytes() const { return bytes_; }
   void increment_bytes(int size) { bytes_ += size; }
 
-  // Clear the number of objects and size fields, but not the name.
   void clear() {
     number_ = 0;
     bytes_ = 0;
   }
 
  private:
-  const char* name_;
   int number_;
   int bytes_;
+};
+
+
+// HistogramInfo class for recording a single "bar" of a histogram.  This
+// class is used for collecting statistics to print to stdout (when compiled
+// with DEBUG) or to the log file (when compiled with
+// ENABLE_LOGGING_AND_PROFILING).
+class HistogramInfo: public NumberAndSizeInfo {
+ public:
+  HistogramInfo() : NumberAndSizeInfo() {}
+
+  const char* name() { return name_; }
+  void set_name(const char* name) { name_ = name; }
+
+ private:
+  const char* name_;
 };
 #endif
 
@@ -957,11 +1004,20 @@ class SemiSpace : public Space {
   // True if the space has been set up but not torn down.
   bool HasBeenSetup() { return start_ != NULL; }
 
-  // Double the size of the semispace by committing extra virtual memory.
+  // Grow the size of the semispace by committing extra virtual memory.
   // Assumes that the caller has checked that the semispace has not reached
   // its maximum capacity (and thus there is space available in the reserved
   // address range to grow).
-  bool Double();
+  bool Grow();
+
+  // Grow the semispace to the new capacity.  The new capacity
+  // requested must be larger than the current capacity.
+  bool GrowTo(int new_capacity);
+
+  // Shrinks the semispace to the new capacity.  The new capacity
+  // requested must be more than the amount of used memory in the
+  // semispace and less than the current capacity.
+  bool ShrinkTo(int new_capacity);
 
   // Returns the start address of the space.
   Address low() { return start_; }
@@ -995,15 +1051,29 @@ class SemiSpace : public Space {
     return 0;
   }
 
+  bool is_committed() { return committed_; }
+  bool Commit();
+  bool Uncommit();
+
 #ifdef DEBUG
   virtual void Print();
   virtual void Verify();
 #endif
 
+  // Returns the current capacity of the semi space.
+  int Capacity() { return capacity_; }
+
+  // Returns the maximum capacity of the semi space.
+  int MaximumCapacity() { return maximum_capacity_; }
+
+  // Returns the initial capacity of the semi space.
+  int InitialCapacity() { return initial_capacity_; }
+
  private:
   // The current and maximum capacity of the space.
   int capacity_;
   int maximum_capacity_;
+  int initial_capacity_;
 
   // The start address of the space.
   Address start_;
@@ -1014,6 +1084,8 @@ class SemiSpace : public Space {
   uintptr_t address_mask_;
   uintptr_t object_mask_;
   uintptr_t object_expected_;
+
+  bool committed_;
 
  public:
   TRACK_MEMORY("SemiSpace")
@@ -1041,7 +1113,6 @@ class SemiSpaceIterator : public ObjectIterator {
 
     HeapObject* object = HeapObject::FromAddress(current_);
     int size = (size_func_ == NULL) ? object->Size() : size_func_(object);
-    ASSERT_OBJECT_SIZE(size);
 
     current_ += size;
     return object;
@@ -1092,9 +1163,12 @@ class NewSpace : public Space {
   // Flip the pair of spaces.
   void Flip();
 
-  // Doubles the capacity of the semispaces.  Assumes that they are not at
-  // their maximum capacity.  Returns a flag indicating success or failure.
-  bool Double();
+  // Grow the capacity of the semispaces.  Assumes that they are not at
+  // their maximum capacity.
+  void Grow();
+
+  // Shrink the capacity of the semispaces.
+  void Shrink();
 
   // True if the address or object lies in the address range of either
   // semispace (not necessarily below the allocation pointer).
@@ -1109,12 +1183,24 @@ class NewSpace : public Space {
   // Return the allocated bytes in the active semispace.
   virtual int Size() { return top() - bottom(); }
   // Return the current capacity of a semispace.
-  int Capacity() { return capacity_; }
+  int Capacity() {
+    ASSERT(to_space_.Capacity() == from_space_.Capacity());
+    return to_space_.Capacity();
+  }
   // Return the available bytes without growing in the active semispace.
   int Available() { return Capacity() - Size(); }
 
   // Return the maximum capacity of a semispace.
-  int MaximumCapacity() { return maximum_capacity_; }
+  int MaximumCapacity() {
+    ASSERT(to_space_.MaximumCapacity() == from_space_.MaximumCapacity());
+    return to_space_.MaximumCapacity();
+  }
+
+  // Returns the initial capacity of a semispace.
+  int InitialCapacity() {
+    ASSERT(to_space_.InitialCapacity() == from_space_.InitialCapacity());
+    return to_space_.InitialCapacity();
+  }
 
   // Return the address of the allocation pointer in the active semispace.
   Address top() { return allocation_info_.top; }
@@ -1129,7 +1215,7 @@ class NewSpace : public Space {
   // The start address of the space and a bit mask. Anding an address in the
   // new space with the mask will result in the start address.
   Address start() { return start_; }
-  uint32_t mask() { return address_mask_; }
+  uintptr_t mask() { return address_mask_; }
 
   // The allocation top and limit addresses.
   Address* allocation_top_address() { return &allocation_info_.top; }
@@ -1208,11 +1294,18 @@ class NewSpace : public Space {
   void RecordPromotion(HeapObject* obj);
 #endif
 
- private:
-  // The current and maximum capacities of a semispace.
-  int capacity_;
-  int maximum_capacity_;
+  // Return whether the operation succeded.
+  bool CommitFromSpaceIfNeeded() {
+    if (from_space_.is_committed()) return true;
+    return from_space_.Commit();
+  }
 
+  bool UncommitFromSpace() {
+    if (!from_space_.is_committed()) return true;
+    return from_space_.Uncommit();
+  }
+
+ private:
   // The semispaces.
   SemiSpace to_space_;
   SemiSpace from_space_;
@@ -1271,7 +1364,7 @@ class FreeListNode: public HeapObject {
   inline void set_next(Address next);
 
  private:
-  static const int kNextOffset = Array::kHeaderSize;
+  static const int kNextOffset = POINTER_SIZE_ALIGN(ByteArray::kHeaderSize);
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(FreeListNode);
 };
@@ -1305,7 +1398,7 @@ class OldSpaceFreeList BASE_EMBEDDED {
  private:
   // The size range of blocks, in bytes. (Smaller allocations are allowed, but
   // will always result in waste.)
-  static const int kMinBlockSize = Array::kHeaderSize + kPointerSize;
+  static const int kMinBlockSize = 2 * kPointerSize;
   static const int kMaxBlockSize = Page::kMaxHeapObjectSize;
 
   // The identity of the owning space, for building allocation Failure
@@ -1380,9 +1473,9 @@ class OldSpaceFreeList BASE_EMBEDDED {
 
 
 // The free list for the map space.
-class MapSpaceFreeList BASE_EMBEDDED {
+class FixedSizeFreeList BASE_EMBEDDED {
  public:
-  explicit MapSpaceFreeList(AllocationSpace owner);
+  FixedSizeFreeList(AllocationSpace owner, int object_size);
 
   // Clear the free list.
   void Reset();
@@ -1391,12 +1484,12 @@ class MapSpaceFreeList BASE_EMBEDDED {
   int available() { return available_; }
 
   // Place a node on the free list.  The block starting at 'start' (assumed to
-  // have size Map::kSize) is placed on the free list.  Bookkeeping
+  // have size object_size_) is placed on the free list.  Bookkeeping
   // information will be written to the block, ie, its contents will be
   // destroyed.  The start address should be word aligned.
   void Free(Address start);
 
-  // Allocate a map-sized block from the free list.  The block is unitialized.
+  // Allocate a fixed sized block from the free list.  The block is unitialized.
   // A failure is returned if no block is available.
   Object* Allocate();
 
@@ -1411,7 +1504,10 @@ class MapSpaceFreeList BASE_EMBEDDED {
   // objects.
   AllocationSpace owner_;
 
-  DISALLOW_COPY_AND_ASSIGN(MapSpaceFreeList);
+  // The size of the objects in this space.
+  int object_size_;
+
+  DISALLOW_COPY_AND_ASSIGN(FixedSizeFreeList);
 };
 
 
@@ -1426,6 +1522,7 @@ class OldSpace : public PagedSpace {
                     AllocationSpace id,
                     Executability executable)
       : PagedSpace(max_capacity, id, executable), free_list_(id) {
+    page_extra_ = 0;
   }
 
   // The bytes available on the free list (ie, not above the linear allocation
@@ -1449,20 +1546,11 @@ class OldSpace : public PagedSpace {
   // clears the free list.
   virtual void PrepareForMarkCompact(bool will_compact);
 
-  // Adjust the top of relocation pointer to point to the end of the object
-  // given by 'address' and 'size_in_bytes'.  Move it to the next page if
-  // necessary, ensure that it points to the address, then increment it by the
-  // size.
-  void MCAdjustRelocationEnd(Address address, int size_in_bytes);
-
   // Updates the allocation pointer to the relocation top after a mark-compact
   // collection.
   virtual void MCCommitRelocationInfo();
 
 #ifdef DEBUG
-  // Verify integrity of this space.
-  virtual void Verify();
-
   // Reports statistics for the space
   void ReportStatistics();
   // Dump the remembered sets in the space to stdout.
@@ -1481,38 +1569,40 @@ class OldSpace : public PagedSpace {
   // The space's free list.
   OldSpaceFreeList free_list_;
 
-  // During relocation, we keep a pointer to the most recently relocated
-  // object in order to know when to move to the next page.
-  Address mc_end_of_relocation_;
-
  public:
   TRACK_MEMORY("OldSpace")
 };
 
 
 // -----------------------------------------------------------------------------
-// Old space for all map objects
+// Old space for objects of a fixed size
 
-class MapSpace : public PagedSpace {
+class FixedSpace : public PagedSpace {
  public:
-  // Creates a map space object with a maximum capacity.
-  explicit MapSpace(int max_capacity, AllocationSpace id)
-      : PagedSpace(max_capacity, id, NOT_EXECUTABLE), free_list_(id) { }
+  FixedSpace(int max_capacity,
+             AllocationSpace id,
+             int object_size_in_bytes,
+             const char* name)
+      : PagedSpace(max_capacity, id, NOT_EXECUTABLE),
+        object_size_in_bytes_(object_size_in_bytes),
+        name_(name),
+        free_list_(id, object_size_in_bytes) {
+    page_extra_ = Page::kObjectAreaSize % object_size_in_bytes;
+  }
 
   // The top of allocation in a page in this space. Undefined if page is unused.
   virtual Address PageAllocationTop(Page* page) {
     return page == TopPageOf(allocation_info_) ? top()
-        : page->ObjectAreaEnd() - kPageExtra;
+        : page->ObjectAreaEnd() - page_extra_;
   }
 
-  // Give a map-sized block of memory to the space's free list.
+  int object_size_in_bytes() { return object_size_in_bytes_; }
+
+  // Give a fixed sized block of memory to the space's free list.
   void Free(Address start) {
     free_list_.Free(start);
-    accounting_stats_.DeallocateBytes(Map::kSize);
+    accounting_stats_.DeallocateBytes(object_size_in_bytes_);
   }
-
-  // Given an index, returns the page address.
-  Address PageAddress(int page_index) { return page_addresses_[page_index]; }
 
   // Prepares for a mark-compact GC.
   virtual void PrepareForMarkCompact(bool will_compact);
@@ -1522,20 +1612,12 @@ class MapSpace : public PagedSpace {
   virtual void MCCommitRelocationInfo();
 
 #ifdef DEBUG
-  // Verify integrity of this space.
-  virtual void Verify();
-
   // Reports statistic info of the space
   void ReportStatistics();
+
   // Dump the remembered sets in the space to stdout.
   void PrintRSet();
 #endif
-
-  // Constants.
-  static const int kMapPageIndexBits = 10;
-  static const int kMaxMapPageIndex = (1 << kMapPageIndexBits) - 1;
-
-  static const int kPageExtra = Page::kObjectAreaSize % Map::kSize;
 
  protected:
   // Virtual function in the superclass.  Slow path of AllocateRaw.
@@ -1546,14 +1628,65 @@ class MapSpace : public PagedSpace {
   HeapObject* AllocateInNextPage(Page* current_page, int size_in_bytes);
 
  private:
-  // The space's free list.
-  MapSpaceFreeList free_list_;
+  // The size of objects in this space.
+  int object_size_in_bytes_;
 
+  // The name of this space.
+  const char* name_;
+
+  // The space's free list.
+  FixedSizeFreeList free_list_;
+};
+
+
+// -----------------------------------------------------------------------------
+// Old space for all map objects
+
+class MapSpace : public FixedSpace {
+ public:
+  // Creates a map space object with a maximum capacity.
+  MapSpace(int max_capacity, AllocationSpace id)
+      : FixedSpace(max_capacity, id, Map::kSize, "map") {}
+
+  // Prepares for a mark-compact GC.
+  virtual void PrepareForMarkCompact(bool will_compact);
+
+  // Given an index, returns the page address.
+  Address PageAddress(int page_index) { return page_addresses_[page_index]; }
+
+  // Constants.
+  static const int kMaxMapPageIndex = (1 << MapWord::kMapPageIndexBits) - 1;
+
+ protected:
+#ifdef DEBUG
+  virtual void VerifyObject(HeapObject* obj);
+#endif
+
+ private:
   // An array of page start address in a map space.
   Address page_addresses_[kMaxMapPageIndex + 1];
 
  public:
   TRACK_MEMORY("MapSpace")
+};
+
+
+// -----------------------------------------------------------------------------
+// Old space for all global object property cell objects
+
+class CellSpace : public FixedSpace {
+ public:
+  // Creates a property cell space object with a maximum capacity.
+  CellSpace(int max_capacity, AllocationSpace id)
+      : FixedSpace(max_capacity, id, JSGlobalPropertyCell::kSize, "cell") {}
+
+ protected:
+#ifdef DEBUG
+  virtual void VerifyObject(HeapObject* obj);
+#endif
+
+ public:
+  TRACK_MEMORY("CellSpace")
 };
 
 

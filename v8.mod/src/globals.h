@@ -47,7 +47,14 @@ namespace internal {
 #define V8_HOST_ARCH_ARM 1
 #define V8_HOST_ARCH_32_BIT 1
 #else
-#error Your architecture was not detected as supported by v8
+#error Your host architecture was not detected as supported by v8
+#endif
+
+#if defined(V8_TARGET_ARCH_X64) || defined(V8_TARGET_ARCH_IA32)
+#define V8_TARGET_CAN_READ_UNALIGNED 1
+#elif V8_TARGET_ARCH_ARM
+#else
+#error Your target architecture is not supported by v8
 #endif
 
 // Support for alternative bool type. This is only enabled if the code is
@@ -111,16 +118,19 @@ const int kMinInt = -kMaxInt - 1;
 
 const uint32_t kMaxUInt32 = 0xFFFFFFFFu;
 
-const int kCharSize     = sizeof(char);    // NOLINT
-const int kShortSize    = sizeof(short);   // NOLINT
-const int kIntSize      = sizeof(int);     // NOLINT
-const int kDoubleSize   = sizeof(double);  // NOLINT
-const int kPointerSize  = sizeof(void*);   // NOLINT
+const int kCharSize     = sizeof(char);      // NOLINT
+const int kShortSize    = sizeof(short);     // NOLINT
+const int kIntSize      = sizeof(int);       // NOLINT
+const int kDoubleSize   = sizeof(double);    // NOLINT
+const int kPointerSize  = sizeof(void*);     // NOLINT
+const int kIntptrSize   = sizeof(intptr_t);  // NOLINT
 
 #if V8_HOST_ARCH_64_BIT
 const int kPointerSizeLog2 = 3;
+const intptr_t kIntptrSignBit = V8_INT64_C(0x8000000000000000);
 #else
 const int kPointerSizeLog2 = 2;
+const intptr_t kIntptrSignBit = 0x80000000;
 #endif
 
 const int kObjectAlignmentBits = kPointerSizeLog2;
@@ -130,17 +140,6 @@ const intptr_t kObjectAlignmentMask = kObjectAlignment - 1;
 // Desired alignment for pointers.
 const intptr_t kPointerAlignment = (1 << kPointerSizeLog2);
 const intptr_t kPointerAlignmentMask = kPointerAlignment - 1;
-
-// Tag information for HeapObject.
-const int kHeapObjectTag = 1;
-const int kHeapObjectTagSize = 2;
-const intptr_t kHeapObjectTagMask = (1 << kHeapObjectTagSize) - 1;
-
-
-// Tag information for Smi.
-const int kSmiTag = 0;
-const int kSmiTagSize = 1;
-const intptr_t kSmiTagMask = (1 << kSmiTagSize) - 1;
 
 
 // Tag information for Failure.
@@ -195,7 +194,8 @@ class FixedArray;
 class FunctionEntry;
 class FunctionLiteral;
 class FunctionTemplateInfo;
-class Dictionary;
+class NumberDictionary;
+class StringDictionary;
 class FreeStoreAllocationPolicy;
 template <typename T> class Handle;
 class Heap;
@@ -203,6 +203,7 @@ class HeapObject;
 class IC;
 class InterceptorInfo;
 class IterationStatement;
+class Array;
 class JSArray;
 class JSFunction;
 class JSObject;
@@ -253,14 +254,16 @@ typedef bool (*WeakSlotCallback)(Object** pointer);
 // NOTE: SpaceIterator depends on AllocationSpace enumeration values being
 // consecutive.
 enum AllocationSpace {
-  NEW_SPACE,          // Semispaces collected with copying collector.
-  OLD_POINTER_SPACE,  // Must be first of the paged spaces - see PagedSpaces.
-  OLD_DATA_SPACE,     // May not have pointers to new space.
-  CODE_SPACE,         // Also one of the old spaces.  Marked executable.
-  MAP_SPACE,          // Only map objects.
-  LO_SPACE,           // Large objects.
+  NEW_SPACE,            // Semispaces collected with copying collector.
+  OLD_POINTER_SPACE,    // May contain pointers to new space.
+  OLD_DATA_SPACE,       // Must not have pointers to new space.
+  CODE_SPACE,           // No pointers to new space, marked executable.
+  MAP_SPACE,            // Only and all map objects.
+  CELL_SPACE,           // Only and all cell objects.
+  LO_SPACE,             // Promoted large objects.
+
   FIRST_SPACE = NEW_SPACE,
-  LAST_SPACE = LO_SPACE  // <= 5 (see kSpaceBits and kLOSpacePointer)
+  LAST_SPACE = LO_SPACE
 };
 const int kSpaceTagSize = 3;
 const int kSpaceTagMask = (1 << kSpaceTagSize) - 1;
@@ -421,9 +424,6 @@ enum StateTag {
 
 #define HAS_FAILURE_TAG(value) \
   ((reinterpret_cast<intptr_t>(value) & kFailureTagMask) == kFailureTag)
-
-#define HAS_HEAP_OBJECT_TAG(value) \
-  ((reinterpret_cast<intptr_t>(value) & kHeapObjectTagMask) == kHeapObjectTag)
 
 // OBJECT_SIZE_ALIGN returns the value aligned HeapObject size
 #define OBJECT_SIZE_ALIGN(value)                                \

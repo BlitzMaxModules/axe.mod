@@ -34,7 +34,7 @@
 namespace v8 {
 namespace internal {
 
-int Heap::MaxHeapObjectSize() {
+int Heap::MaxObjectSizeInPagedSpace() {
   return Page::kMaxHeapObjectSize;
 }
 
@@ -82,6 +82,8 @@ Object* Heap::AllocateRaw(int size_in_bytes,
     result = code_space_->AllocateRaw(size_in_bytes);
   } else if (LO_SPACE == space) {
     result = lo_space_->AllocateRaw(size_in_bytes);
+  } else if (CELL_SPACE == space) {
+    result = cell_space_->AllocateRaw(size_in_bytes);
   } else {
     ASSERT(MAP_SPACE == space);
     result = map_space_->AllocateRaw(size_in_bytes);
@@ -107,12 +109,23 @@ Object* Heap::NumberFromUint32(uint32_t value) {
 }
 
 
-Object* Heap::AllocateRawMap(int size_in_bytes) {
+Object* Heap::AllocateRawMap() {
 #ifdef DEBUG
   Counters::objs_since_last_full.Increment();
   Counters::objs_since_last_young.Increment();
 #endif
-  Object* result = map_space_->AllocateRaw(size_in_bytes);
+  Object* result = map_space_->AllocateRaw(Map::kSize);
+  if (result->IsFailure()) old_gen_exhausted_ = true;
+  return result;
+}
+
+
+Object* Heap::AllocateRawCell() {
+#ifdef DEBUG
+  Counters::objs_since_last_full.Increment();
+  Counters::objs_since_last_young.Increment();
+#endif
+  Object* result = cell_space_->AllocateRaw(JSGlobalPropertyCell::kSize);
   if (result->IsFailure()) old_gen_exhausted_ = true;
   return result;
 }
@@ -146,9 +159,7 @@ void Heap::RecordWrite(Address address, int offset) {
   if (new_space_.Contains(address)) return;
   ASSERT(!new_space_.FromSpaceContains(address));
   SLOW_ASSERT(Contains(address + offset));
-#ifndef V8_HOST_ARCH_64_BIT
   Page::SetRSet(address, offset);
-#endif  // V8_HOST_ARCH_64_BIT
 }
 
 
@@ -215,28 +226,33 @@ void Heap::ScavengeObject(HeapObject** p, HeapObject* object) {
 }
 
 
-Object* Heap::GetKeyedLookupCache() {
-  if (keyed_lookup_cache()->IsUndefined()) {
-    Object* obj = LookupCache::Allocate(4);
-    if (obj->IsFailure()) return obj;
-    keyed_lookup_cache_ = obj;
+int Heap::AdjustAmountOfExternalAllocatedMemory(int change_in_bytes) {
+  ASSERT(HasBeenSetup());
+  int amount = amount_of_external_allocated_memory_ + change_in_bytes;
+  if (change_in_bytes >= 0) {
+    // Avoid overflow.
+    if (amount > amount_of_external_allocated_memory_) {
+      amount_of_external_allocated_memory_ = amount;
+    }
+    int amount_since_last_global_gc =
+        amount_of_external_allocated_memory_ -
+        amount_of_external_allocated_memory_at_last_global_gc_;
+    if (amount_since_last_global_gc > external_allocation_limit_) {
+      CollectAllGarbage(false);
+    }
+  } else {
+    // Avoid underflow.
+    if (amount >= 0) {
+      amount_of_external_allocated_memory_ = amount;
+    }
   }
-  return keyed_lookup_cache();
-}
-
-
-void Heap::SetKeyedLookupCache(LookupCache* cache) {
-  keyed_lookup_cache_ = cache;
-}
-
-
-void Heap::ClearKeyedLookupCache() {
-  keyed_lookup_cache_ = undefined_value();
+  ASSERT(amount_of_external_allocated_memory_ >= 0);
+  return amount_of_external_allocated_memory_;
 }
 
 
 void Heap::SetLastScriptId(Object* last_script_id) {
-  last_script_id_ = last_script_id;
+  roots_[kLastScriptIdRootIndex] = last_script_id;
 }
 
 
@@ -269,7 +285,7 @@ void Heap::SetLastScriptId(Object* last_script_id) {
     }                                                                     \
     if (!__object__->IsRetryAfterGC()) RETURN_EMPTY;                      \
     Counters::gc_last_resort_from_handles.Increment();                    \
-    Heap::CollectAllGarbage();                                            \
+    Heap::CollectAllGarbage(false);                                       \
     {                                                                     \
       AlwaysAllocateScope __scope__;                                      \
       __object__ = FUNCTION_CALL;                                         \

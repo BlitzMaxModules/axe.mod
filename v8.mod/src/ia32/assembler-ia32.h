@@ -79,17 +79,15 @@ struct Register {
   int code_;
 };
 
-const int kNumRegisters = 8;
-
-extern Register eax;
-extern Register ecx;
-extern Register edx;
-extern Register ebx;
-extern Register esp;
-extern Register ebp;
-extern Register esi;
-extern Register edi;
-extern Register no_reg;
+const Register eax = { 0 };
+const Register ecx = { 1 };
+const Register edx = { 2 };
+const Register ebx = { 3 };
+const Register esp = { 4 };
+const Register ebp = { 5 };
+const Register esi = { 6 };
+const Register edi = { 7 };
+const Register no_reg = { -1 };
 
 
 struct XMMRegister {
@@ -102,14 +100,14 @@ struct XMMRegister {
   int code_;
 };
 
-extern XMMRegister xmm0;
-extern XMMRegister xmm1;
-extern XMMRegister xmm2;
-extern XMMRegister xmm3;
-extern XMMRegister xmm4;
-extern XMMRegister xmm5;
-extern XMMRegister xmm6;
-extern XMMRegister xmm7;
+const XMMRegister xmm0 = { 0 };
+const XMMRegister xmm1 = { 1 };
+const XMMRegister xmm2 = { 2 };
+const XMMRegister xmm3 = { 3 };
+const XMMRegister xmm4 = { 4 };
+const XMMRegister xmm5 = { 5 };
+const XMMRegister xmm6 = { 6 };
+const XMMRegister xmm7 = { 7 };
 
 enum Condition {
   // any value < 0 is considered no_condition
@@ -228,7 +226,9 @@ enum ScaleFactor {
   times_1 = 0,
   times_2 = 1,
   times_4 = 2,
-  times_8 = 3
+  times_8 = 3,
+  times_pointer_size = times_4,
+  times_half_pointer_size = times_2
 };
 
 
@@ -398,10 +398,15 @@ class CpuFeatures : public AllStatic {
 
 class Assembler : public Malloced {
  private:
-  // The relocation writer's position is kGap bytes below the end of
+  // We check before assembling an instruction that there is sufficient
+  // space to write an instruction and its relocation information.
+  // The relocation writer's position must be kGap bytes above the end of
   // the generated instructions. This leaves enough space for the
-  // longest possible ia32 instruction (17 bytes as of 9/26/06) and
-  // allows for a single, fast space check per instruction.
+  // longest possible ia32 instruction, 15 bytes, and the longest possible
+  // relocation information encoding, RelocInfoWriter::kMaxLength == 16.
+  // (There is a 15 byte limit on ia32 instruction length that rules out some
+  // otherwise valid instructions.)
+  // This allows for a single, fast space check per instruction.
   static const int kGap = 32;
 
  public:
@@ -432,7 +437,10 @@ class Assembler : public Malloced {
 
   // Distance between the address of the code target in the call instruction
   // and the return address
-  static const int kTargetAddrToReturnAddrDist = kPointerSize;
+  static const int kCallTargetAddressOffset = kPointerSize;
+  // Distance between start of patched return sequence and the emitted address
+  // to jump to.
+  static const int kPatchReturnSequenceAddressOffset = 1;  // JMP imm32.
 
 
   // ---------------------------------------------------------------------------
@@ -531,6 +539,7 @@ class Assembler : public Malloced {
   void cmp(Register reg, Handle<Object> handle);
   void cmp(Register reg, const Operand& op);
   void cmp(const Operand& op, const Immediate& imm);
+  void cmp(const Operand& op, Handle<Object> handle);
 
   void dec_b(Register dst);
 
@@ -541,15 +550,18 @@ class Assembler : public Malloced {
 
   void idiv(Register src);
 
-  void imul(Register dst, const Operand& src);
-  void imul(Register dst, Register src, int32_t imm32);
+  // Signed multiply instructions.
+  void imul(Register src);                               // edx:eax = eax * src.
+  void imul(Register dst, const Operand& src);           // dst = dst * src.
+  void imul(Register dst, Register src, int32_t imm32);  // dst = src * imm32.
 
   void inc(Register dst);
   void inc(const Operand& dst);
 
   void lea(Register dst, const Operand& src);
 
-  void mul(Register src);
+  // Unsigned multiply instruction.
+  void mul(Register src);                                // edx:eax = eax * reg.
 
   void neg(Register dst);
 
@@ -660,6 +672,8 @@ class Assembler : public Malloced {
 
   void fabs();
   void fchs();
+  void fcos();
+  void fsin();
 
   void fadd(int i);
   void fsub(int i);
@@ -706,6 +720,8 @@ class Assembler : public Malloced {
   void mulsd(XMMRegister dst, XMMRegister src);
   void divsd(XMMRegister dst, XMMRegister src);
 
+  void comisd(XMMRegister dst, XMMRegister src);
+
   // Use either movsd or movlpd.
   void movdbl(XMMRegister dst, const Operand& src);
   void movdbl(const Operand& dst, XMMRegister src);
@@ -730,11 +746,6 @@ class Assembler : public Malloced {
   // Writes a single word of data in the code stream.
   // Used for inline tables, e.g., jump-tables.
   void dd(uint32_t data, RelocInfo::Mode reloc_info);
-
-  // Writes the absolute address of a bound label at the given position in
-  // the generated code. That positions should have the relocation mode
-  // internal_reference!
-  void WriteInternalReference(int position, const Label& bound_label);
 
   int pc_offset() const  { return pc_ - buffer_; }
   int current_statement_position() const { return current_statement_position_; }

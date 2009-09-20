@@ -1,4 +1,4 @@
-// Copyright 2006-2008 the V8 project authors. All rights reserved.
+// Copyright 2006-2009 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -35,25 +35,6 @@ namespace internal {
 
 // Forward declaration.
 class JumpTarget;
-
-
-// Helper types to make flags easier to read at call sites.
-enum InvokeFlag {
-  CALL_FUNCTION,
-  JUMP_FUNCTION
-};
-
-enum CodeLocation {
-  IN_JAVASCRIPT,
-  IN_JS_ENTRY,
-  IN_C_ENTRY
-};
-
-enum HandlerType {
-  TRY_CATCH_HANDLER,
-  TRY_FINALLY_HANDLER,
-  JS_ENTRY_HANDLER
-};
 
 
 // MacroAssembler implements a collection of frequently used macros.
@@ -154,9 +135,8 @@ class MacroAssembler: public Assembler {
   // ---------------------------------------------------------------------------
   // Exception handling
 
-  // Push a new try handler and link into try handler chain.
-  // The return address must be pushed before calling this helper.
-  // On exit, eax contains TOS (next_sp).
+  // Push a new try handler and link into try handler chain.  The return
+  // address must be pushed before calling this helper.
   void PushTryHandler(CodeLocation try_location, HandlerType type);
 
 
@@ -183,6 +163,48 @@ class MacroAssembler: public Assembler {
                               Register scratch,
                               Label* miss);
 
+
+  // ---------------------------------------------------------------------------
+  // Allocation support
+
+  // Allocate an object in new space. If the new space is exhausted control
+  // continues at the gc_required label. The allocated object is returned in
+  // result and end of the new object is returned in result_end. The register
+  // scratch can be passed as no_reg in which case an additional object
+  // reference will be added to the reloc info. The returned pointers in result
+  // and result_end have not yet been tagged as heap objects. If
+  // result_contains_top_on_entry is true the contnt of result is known to be
+  // the allocation top on entry (could be result_end from a previous call to
+  // AllocateObjectInNewSpace). If result_contains_top_on_entry is true scratch
+  // should be no_reg as it is never used.
+  void AllocateObjectInNewSpace(int object_size,
+                                Register result,
+                                Register result_end,
+                                Register scratch,
+                                Label* gc_required,
+                                AllocationFlags flags);
+
+  void AllocateObjectInNewSpace(int header_size,
+                                ScaleFactor element_size,
+                                Register element_count,
+                                Register result,
+                                Register result_end,
+                                Register scratch,
+                                Label* gc_required,
+                                AllocationFlags flags);
+
+  void AllocateObjectInNewSpace(Register object_size,
+                                Register result,
+                                Register result_end,
+                                Register scratch,
+                                Label* gc_required,
+                                AllocationFlags flags);
+
+  // Undo allocation in new space. The object passed and objects allocated after
+  // it will no longer be allocated. Make sure that no pointers are left to the
+  // object(s) no longer allocated as they would be invalid when allocation is
+  // un-done.
+  void UndoAllocationInNewSpace(Register object);
 
   // ---------------------------------------------------------------------------
   // Support functions.
@@ -234,7 +256,9 @@ class MacroAssembler: public Assembler {
   // Tail call of a runtime routine (jump).
   // Like JumpToBuiltin, but also takes care of passing the number
   // of arguments.
-  void TailCallRuntime(const ExternalReference& ext, int num_arguments);
+  void TailCallRuntime(const ExternalReference& ext,
+                       int num_arguments,
+                       int result_size);
 
   // Jump to the builtin routine.
   void JumpToBuiltin(const ExternalReference& ext);
@@ -286,7 +310,7 @@ class MacroAssembler: public Assembler {
   List<Unresolved> unresolved_;
   bool generating_stub_;
   bool allow_stub_calls_;
-  Handle<Object> code_object_;  // This handle will be patched with the code
+  Handle<Object> code_object_;  // This handle will be patched with the
                                 // code object on installation.
 
   // Helper functions for generating invokes.
@@ -304,6 +328,13 @@ class MacroAssembler: public Assembler {
   // Activation support.
   void EnterFrame(StackFrame::Type type);
   void LeaveFrame(StackFrame::Type type);
+
+  // Allocation support helpers.
+  void LoadAllocationTopHelper(Register result,
+                               Register result_end,
+                               Register scratch,
+                               AllocationFlags flags);
+  void UpdateAllocationTopHelper(Register result_end, Register scratch);
 };
 
 

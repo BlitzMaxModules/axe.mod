@@ -41,6 +41,8 @@ class CodeStub BASE_EMBEDDED {
     SmiOp,
     Compare,
     RecordWrite,  // Last stub that allows stub calls inside.
+    ConvertToDouble,
+    WriteInt32ToHeapNumber,
     StackCheck,
     UnarySub,
     RevertToNumber,
@@ -55,6 +57,7 @@ class CodeStub BASE_EMBEDDED {
     SetProperty,   // ARM only
     InvokeBuiltin,  // ARM only
     JSExit,        // ARM only
+    RegExpCEntry,  // ARM only
     NUMBER_OF_IDS
   };
 

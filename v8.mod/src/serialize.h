@@ -197,7 +197,7 @@ class Serializer: public ObjectVisitor {
 
   int flags_end_;  // The position right after the flags.
 
-  // An array of per-space SimulatedHeapSpacees used as memory allocators.
+  // An array of per-space SimulatedHeapSpaces used as memory allocators.
   SimulatedHeapSpace* allocator_[LAST_SPACE+1];
   // A list of global handles at serialization time.
   List<Object**> global_handles_;
@@ -320,10 +320,11 @@ class Deserializer: public ObjectVisitor {
   bool has_log_;  // The file has log information.
 
   // Resolve caches the following:
-  List<Page*> map_pages_;          // All pages in the map space.
+  List<Page*> map_pages_;  // All pages in the map space.
+  List<Page*> cell_pages_;  // All pages in the cell space.
   List<Page*> old_pointer_pages_;  // All pages in the old pointer space.
-  List<Page*> old_data_pages_;     // All pages in the old data space.
-  List<Page*> code_pages_;
+  List<Page*> old_data_pages_;  // All pages in the old data space.
+  List<Page*> code_pages_;  // All pages in the code space.
   List<Object*> large_objects_;    // All known large objects.
   // A list of global handles at deserialization time.
   List<Object**> global_handles_;
