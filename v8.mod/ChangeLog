@@ -1,3 +1,337 @@
+2009-09-15: Version 1.3.11
+
+        Fixed crash in error reporting during bootstrapping.
+
+        Optimized generated IA32 math code by using SSE2 instructions when
+        available.
+
+        Implemented missing pieces of debugger infrastructure on ARM.  The
+        debugger is now fully functional on ARM.
+
+        Make 'hidden' the default visibility for gcc.
+
+
+2009-09-09: Version 1.3.10
+
+        Fixed profiler on Mac in 64-bit mode.
+
+        Optimized creation of objects from simple constructor functions on
+        ARM.
+
+        Fixed a number of debugger issues.
+
+        Reduced the amount of memory consumed by V8.
+
+
+2009-09-02: Version 1.3.9
+
+        Optimized stack guard checks on ARM.
+
+        Optimized API operations by inlining more in the API.
+
+        Optimized creation of objects from simple constructor functions.
+
+        Enabled a number of missing optimizations in the 64-bit port.
+
+        Implemented native-code support for regular expressions on ARM.
+
+        Stopped using the 'sahf' instruction on 64-bit machines that do
+        not support it.
+
+        Fixed a bug in the support for forceful termination of JavaScript
+        execution.
+
+
+2009-08-26: Version 1.3.8
+
+        Changed the handling of idle notifications to allow idle
+        notifications when V8 has not yet been initialized.
+
+        Fixed ARM simulator compilation problem on Windows.
+        
+
+2009-08-25: Version 1.3.7
+
+        Reduced the size of generated code on ARM platforms by reducing
+        the size of constant pools.
+
+        Changed build files to not include the 'ENV' user environment
+        variable in the build environment.
+
+        Changed the handling of idle notifications.
+
+
+2009-08-21: Version 1.3.6
+
+        Add support for forceful termination of JavaScript execution.
+
+        Add low memory notification to the API. The embedding host can signal
+        a low memory situation to V8.
+
+        Changed the handling of global handles (persistent handles in the API
+        sense) to avoid issues regarding allocation of new global handles
+        during weak handle callbacks.
+
+        Changed the growth policy of the young space.
+
+        Fixed a GC issue introduced in version 1.3.5.
+
+
+2009-08-19: Version 1.3.5
+
+        Optimize initialization of some arrays in the builtins.
+
+        Fix mac-nm script to support filenames with spaces.
+
+        Support for using the V8 profiler when V8 is embedded in a Windows DLL.
+
+        Changed typeof RegExp from 'object' to 'function' for compatibility.
+        Fixed bug where regexps were not callable across contexts.
+
+        Added context independent script compilation to the API.
+
+        Added API call to get the stack trace for an exception.
+
+        Added API for getting object mirrors.
+
+        Make sure that SSE3 instructions are used whenever possible even when
+        running off a snapshot generated without using SSE3 instructions.
+
+        Tweaked the handling of the initial size and growth policy of the heap.
+
+        Added native code generation for RegExp to 64-bit version.
+
+        Added JavaScript debugger support to 64-bit version.
+
+
+2009-08-13: Version 1.3.4
+
+        Added a readline() command to the d8 shell.
+
+        Fixed bug in json parsing.
+
+        Added idle notification to the API and reduced memory on idle
+        notifications.
+
+
+2009-08-12: Version 1.3.3
+
+        Fix issue 417: incorrect %t placeholder expansion.
+
+        Add .gitignore file similar to Chromium's one.
+
+        Fix SConstruct file to build with new logging code for Android.
+
+        API: added function to find instance of template in prototype
+        chain.  Inlined Object::IsInstanceOf.
+
+        Land change to notify valgrind when we modify code on x86.
+
+        Add api call to determine whether a string can be externalized.
+
+        Add a write() command to d8.
+
+
+2009-08-05: Version 1.3.2
+
+        Started new compiler infrastructure for two-pass compilation using a
+        control flow graph constructed from the AST.
+
+        Profiler stack sampling for X64.
+
+        Safe handling of NaN to Posix platform-dependent time functions.
+
+        Added a new profiler control API to unify controlling various aspects
+        of profiling.
+
+        Fixed issue 392.
+
+
+2009-07-30: Version 1.3.1
+
+        Speed improvements to accessors and interceptors.
+
+        Added support for capturing stack information on custom errors.
+
+        Added support for morphing an object into a pixel array where its
+        indexed properties are stored in an external byte array. Values written
+        are always clamped to the 0..255 interval.
+
+        Profiler on x64 now handles C/C++ functions from shared libraries.
+
+        Changed the debugger to avoid stepping into function.call/apply if the
+        function is a built-in.
+
+        Initial implementation of constructor heap profile for JS objects.
+                  
+        More fine grained control of profiling aspects through the API.
+                    
+        Optimized the called as constructor check for API calls.
+
+
+2009-07-27: Version 1.3.0
+
+        Allowed RegExp objects to be called as functions (issue 132).
+
+        Fixed issue where global property cells would escape after
+        detaching the global object; see http://crbug.com/16276.
+
+        Added support for stepping into setters and getters in the
+        debugger.
+
+        Changed the debugger to avoid stopping in its own JavaScript code
+        and in the code of built-in functions.
+
+        Fixed issue 345 by avoiding duplicate escaping labels.
+
+        Fixed ARM code generator crash in short-circuited boolean
+        expressions and added regression tests.
+
+        Added an external allocation limit to avoid issues where small V8
+        objects would hold on to large amounts of external memory without
+        causing garbage collections.
+ 
+        Finished more of the inline caching stubs for x64 targets. 
+
+
+2009-07-13: Version 1.2.14
+
+        Added separate paged heap space for global property cells and
+        avoid updating the write barrier when storing into them.
+
+        Improved peep-hole optimization on ARM platforms by not emitting
+        unnecessary debug information.
+
+        Re-enabled ICs for loads and calls that skip a global object
+        during lookup through the prototype chain.
+
+        Allowed access through global proxies to use ICs.
+
+        Fixed issue 401.
+
+
+2009-07-09: Version 1.2.13
+
+        Fixed issue 397, issue 398, and issue 399.
+
+        Added support for breakpoint groups.
+
+        Fixed bugs introduced with the new global object representation.
+
+        Fixed a few bugs in the ARM code generator.
+
+
+2009-07-06: Version 1.2.12
+
+        Added stack traces collection to Error objects accessible through
+        the e.stack property.
+
+        Changed RegExp parser to use a recursive data structure instead of
+        stack-based recursion.
+
+        Optimized Date object construction and string concatenation.
+
+        Improved performance of div, mod, and mul on ARM platforms.
+
+
+2009-07-02: Version 1.2.11
+
+        Improved performance on IA-32 and ARM.
+
+        Fixed profiler sampler implementation on Mac OS X.
+
+        Changed the representation of global objects to improve
+        performance of adding a lot of new properties.
+
+
+2009-06-29: Version 1.2.10
+
+        Improved debugger support.
+
+        Fixed bug in exception message reporting (issue 390).
+
+        Improved overall performance.
+
+
+2009-06-23: Version 1.2.9
+
+        Improved math performance on ARM.
+
+        Fixed profiler name-inference bug.
+
+        Fixed handling of shared libraries in the profiler tick processor
+        scripts.
+
+        Fixed handling of tests that time out in the test scripts.
+
+        Fixed compilation on MacOS X version 10.4.
+
+        Fixed two bugs in the regular expression engine.
+
+        Fixed a bug in the string type inference.
+
+        Fixed a bug in the handling of 'constant function' properties.
+        
+        Improved overall performance.
+        
+
+2009-06-16: Version 1.2.8
+
+        Optimized math on ARM platforms.
+
+        Fixed two crash bugs in the handling of getters and setters.
+
+        Improved the debugger support by adding scope chain information.
+
+        Improved the profiler support by compressing log data transmitted
+        to clients.
+
+        Improved overall performance.
+
+
+2009-06-08: Version 1.2.7
+
+        Improved debugger and profiler support.
+
+        Reduced compilation time by improving the handling of deferred
+        code.
+
+        Optimized interceptor accesses where the property is on the object
+        on which the interceptors is attached.
+
+        Fixed compilation problem on GCC 4.4 by changing the stack
+        alignment to 16 bytes.
+
+        Fixed handle creation to follow stric aliasing rules.
+
+        Fixed compilation on FreeBSD.
+
+        Introduced API for forcing the deletion of a property ignoring
+        interceptors and attributes.
+
+
+2009-05-29: Version 1.2.6
+
+        Added a histogram recording hit rates at different levels of the
+        compilation cache.
+
+        Added stack overflow check for the RegExp analysis phase. Previously a
+        very long regexp graph could overflow the stack with recursive calls.
+
+        Use a dynamic buffer when collecting log events in memory.
+
+        Added start/stop events to the profiler log.
+
+        Fixed infinite loop which could happen when setting a debug break while
+        executing a RegExp compiled to native code.
+
+        Fixed handling of lastIndexOf called with negative index (issue 351).
+
+        Fixed irregular crash in profiler test (issue 358).
+
+        Fixed compilation issues with some versions of gcc.
+
+
 2009-05-26: Version 1.2.5
 
         Fixed bug in initial boundary check for Boyer-Moore text
