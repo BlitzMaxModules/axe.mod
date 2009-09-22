@@ -36,6 +36,7 @@
 namespace v8 {
 namespace internal {
 
+#ifndef V8_NATIVE_REGEXP
 
 RegExpMacroAssemblerIrregexp::RegExpMacroAssemblerIrregexp(Vector<byte> buffer)
     : buffer_(buffer),
@@ -47,6 +48,7 @@ RegExpMacroAssemblerIrregexp::RegExpMacroAssemblerIrregexp(Vector<byte> buffer)
 
 RegExpMacroAssemblerIrregexp::~RegExpMacroAssemblerIrregexp() {
   if (backtrack_.is_linked()) backtrack_.Unuse();
+  if (own_buffer_) buffer_.Dispose();
 }
 
 
@@ -374,37 +376,6 @@ void RegExpMacroAssemblerIrregexp::CheckNotRegistersEqual(int reg1,
 }
 
 
-void RegExpMacroAssemblerIrregexp::CheckBitmap(uc16 start,
-                                           Label* bitmap,
-                                           Label* on_zero) {
-  UNIMPLEMENTED();
-}
-
-
-void RegExpMacroAssemblerIrregexp::DispatchHalfNibbleMap(
-    uc16 start,
-    Label* half_nibble_map,
-    const Vector<Label*>& table) {
-  UNIMPLEMENTED();
-}
-
-
-void RegExpMacroAssemblerIrregexp::DispatchByteMap(
-    uc16 start,
-    Label* byte_map,
-    const Vector<Label*>& table) {
-  UNIMPLEMENTED();
-}
-
-
-void RegExpMacroAssemblerIrregexp::DispatchHighByteMap(
-    byte start,
-    Label* byte_map,
-    const Vector<Label*>& table) {
-  UNIMPLEMENTED();
-}
-
-
 void RegExpMacroAssemblerIrregexp::CheckCharacters(
   Vector<const uc16> str,
   int cp_offset,
@@ -488,5 +459,6 @@ void RegExpMacroAssemblerIrregexp::Expand() {
   }
 }
 
+#endif  // !V8_NATIVE_REGEXP
 
 } }  // namespace v8::internal

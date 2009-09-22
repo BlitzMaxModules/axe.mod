@@ -56,6 +56,8 @@
 #include "v8.h"
 
 #include "platform.h"
+#include "top.h"
+#include "v8threads.h"
 
 
 namespace v8 {
@@ -88,10 +90,15 @@ double OS::nan_value() {
 
 
 int OS::ActivationFrameAlignment() {
-  // Floating point code runs faster if the stack is 8-byte aligned.
+#ifdef V8_TARGET_ARCH_ARM
   // On EABI ARM targets this is required for fp correctness in the
   // runtime system.
   return 8;
+#else
+  // With gcc 4.4 the tree vectorization optimiser can generate code
+  // that requires 16 byte alignment such as movdqa on x86.
+  return 16;
+#endif
 }
 
 
@@ -140,7 +147,9 @@ void* OS::Allocate(const size_t requested,
 
 void OS::Free(void* address, const size_t size) {
   // TODO(1240712): munmap has a return value which is ignored here.
-  munmap(address, size);
+  int result = munmap(address, size);
+  USE(result);
+  ASSERT(result == 0);
 }
 
 
@@ -218,51 +227,63 @@ PosixMemoryMappedFile::~PosixMemoryMappedFile() {
 }
 
 
-#ifdef ENABLE_LOGGING_AND_PROFILING
-static unsigned StringToLong(char* buffer) {
-  return static_cast<unsigned>(strtol(buffer, NULL, 16));  // NOLINT
-}
-#endif
-
-
 void OS::LogSharedLibraryAddresses() {
 #ifdef ENABLE_LOGGING_AND_PROFILING
-  static const int MAP_LENGTH = 1024;
-  int fd = open("/proc/self/maps", O_RDONLY);
-  if (fd < 0) return;
+  // This function assumes that the layout of the file is as follows:
+  // hex_start_addr-hex_end_addr rwxp <unused data> [binary_file_name]
+  // If we encounter an unexpected situation we abort scanning further entries.
+  FILE *fp = fopen("/proc/self/maps", "r");
+  if (fp == NULL) return;
+
+  // Allocate enough room to be able to store a full file name.
+  const int kLibNameLen = FILENAME_MAX + 1;
+  char* lib_name = reinterpret_cast<char*>(malloc(kLibNameLen));
+
+  // This loop will terminate once the scanning hits an EOF.
   while (true) {
-    char addr_buffer[11];
-    addr_buffer[0] = '0';
-    addr_buffer[1] = 'x';
-    addr_buffer[10] = 0;
-    int result = read(fd, addr_buffer + 2, 8);
-    if (result < 8) break;
-    unsigned start = StringToLong(addr_buffer);
-    result = read(fd, addr_buffer + 2, 1);
-    if (result < 1) break;
-    if (addr_buffer[2] != '-') break;
-    result = read(fd, addr_buffer + 2, 8);
-    if (result < 8) break;
-    unsigned end = StringToLong(addr_buffer);
-    char buffer[MAP_LENGTH];
-    int bytes_read = -1;
-    do {
-      bytes_read++;
-      if (bytes_read >= MAP_LENGTH - 1)
-        break;
-      result = read(fd, buffer + bytes_read, 1);
-      if (result < 1) break;
-    } while (buffer[bytes_read] != '\n');
-    buffer[bytes_read] = 0;
-    // Ignore mappings that are not executable.
-    if (buffer[3] != 'x') continue;
-    char* start_of_path = index(buffer, '/');
-    // There may be no filename in this line.  Skip to next.
-    if (start_of_path == NULL) continue;
-    buffer[bytes_read] = 0;
-    LOG(SharedLibraryEvent(start_of_path, start, end));
+    uintptr_t start, end;
+    char attr_r, attr_w, attr_x, attr_p;
+    // Parse the addresses and permission bits at the beginning of the line.
+    if (fscanf(fp, "%" V8PRIxPTR "-%" V8PRIxPTR, &start, &end) != 2) break;
+    if (fscanf(fp, " %c%c%c%c", &attr_r, &attr_w, &attr_x, &attr_p) != 4) break;
+
+    int c;
+    if (attr_r == 'r' && attr_x == 'x') {
+      // Found a readable and executable entry. Skip characters until we reach
+      // the beginning of the filename or the end of the line.
+      do {
+        c = getc(fp);
+      } while ((c != EOF) && (c != '\n') && (c != '/'));
+      if (c == EOF) break;  // EOF: Was unexpected, just exit.
+
+      // Process the filename if found.
+      if (c == '/') {
+        ungetc(c, fp);  // Push the '/' back into the stream to be read below.
+
+        // Read to the end of the line. Exit if the read fails.
+        if (fgets(lib_name, kLibNameLen, fp) == NULL) break;
+
+        // Drop the newline character read by fgets. We do not need to check
+        // for a zero-length string because we know that we at least read the
+        // '/' character.
+        lib_name[strlen(lib_name) - 1] = '\0';
+      } else {
+        // No library name found, just record the raw address range.
+        snprintf(lib_name, kLibNameLen,
+                 "%08" V8PRIxPTR "-%08" V8PRIxPTR, start, end);
+      }
+      LOG(SharedLibraryEvent(lib_name, start, end));
+    } else {
+      // Entry not describing executable data. Skip to end of line to setup
+      // reading the next entry.
+      do {
+        c = getc(fp);
+      } while ((c != EOF) && (c != '\n'));
+      if (c == EOF) break;
+    }
   }
-  close(fd);
+  free(lib_name);
+  fclose(fp);
 #endif
 }
 
@@ -343,7 +364,7 @@ bool VirtualMemory::Commit(void* address, size_t size, bool is_executable) {
 
 bool VirtualMemory::Uncommit(void* address, size_t size) {
   return mmap(address, size, PROT_NONE,
-              MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
+              MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED,
               kMmapFd, kMmapFdOffset) != MAP_FAILED;
 }
 
@@ -563,6 +584,7 @@ Semaphore* OS::CreateSemaphore(int count) {
 #ifdef ENABLE_LOGGING_AND_PROFILING
 
 static Sampler* active_sampler_ = NULL;
+static pthread_t vm_thread_ = 0;
 
 
 #if !defined(__GLIBC__) && (defined(__arm__) || defined(__thumb__))
@@ -589,6 +611,30 @@ typedef struct ucontext {
 enum ArmRegisters {R15 = 15, R13 = 13, R11 = 11};
 
 #endif
+
+
+// A function that determines if a signal handler is called in the context
+// of a VM thread.
+//
+// The problem is that SIGPROF signal can be delivered to an arbitrary thread
+// (see http://code.google.com/p/google-perftools/issues/detail?id=106#c2)
+// So, if the signal is being handled in the context of a non-VM thread,
+// it means that the VM thread is running, and trying to sample its stack can
+// cause a crash.
+static inline bool IsVmThread() {
+  // In the case of a single VM thread, this check is enough.
+  if (pthread_equal(pthread_self(), vm_thread_)) return true;
+  // If there are multiple threads that use VM, they must have a thread id
+  // stored in TLS. To verify that the thread is really executing VM,
+  // we check Top's data. Having that ThreadManager::RestoreThread first
+  // restores ThreadLocalTop from TLS, and only then erases the TLS value,
+  // reading Top::thread_id() should not be affected by races.
+  if (ThreadManager::HasId() && !ThreadManager::IsArchived() &&
+      ThreadManager::CurrentId() == Top::thread_id()) {
+    return true;
+  }
+  return false;
+}
 
 
 static void ProfilerSignalHandler(int signal, siginfo_t* info, void* context) {
@@ -623,6 +669,8 @@ static void ProfilerSignalHandler(int signal, siginfo_t* info, void* context) {
     sample.fp = mcontext.arm_fp;
 #endif
 #endif
+    if (IsVmThread())
+      active_sampler_->SampleStack(&sample);
   }
 
   // We always sample the VM state.
@@ -660,6 +708,8 @@ void Sampler::Start() {
   // platforms.
   if (active_sampler_ != NULL) return;
 
+  vm_thread_ = pthread_self();
+
   // Request profiling signals.
   struct sigaction sa;
   sa.sa_sigaction = ProfilerSignalHandler;
@@ -694,6 +744,7 @@ void Sampler::Stop() {
   active_sampler_ = NULL;
   active_ = false;
 }
+
 
 #endif  // ENABLE_LOGGING_AND_PROFILING
 

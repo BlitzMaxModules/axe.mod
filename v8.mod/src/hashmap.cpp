@@ -87,7 +87,7 @@ HashMap::Entry* HashMap::Lookup(void* key, uint32_t hash, bool insert) {
 
 void HashMap::Remove(void* key, uint32_t hash) {
   // Lookup the entry for the key to remove.
-  Entry *p = Probe(key, hash);
+  Entry* p = Probe(key, hash);
   if (p->key == NULL) {
     // Key not found nothing to remove.
     return;
@@ -194,7 +194,10 @@ HashMap::Entry* HashMap::Probe(void* key, uint32_t hash) {
 void HashMap::Initialize(uint32_t capacity) {
   ASSERT(IsPowerOf2(capacity));
   map_ = reinterpret_cast<Entry*>(allocator_->New(capacity * sizeof(Entry)));
-  if (map_ == NULL) V8::FatalProcessOutOfMemory("HashMap::Initialize");
+  if (map_ == NULL) {
+    V8::FatalProcessOutOfMemory("HashMap::Initialize");
+    return;
+  }
   capacity_ = capacity;
   Clear();
 }

@@ -53,8 +53,8 @@ int HandleScope::NumberOfHandles() {
 }
 
 
-void** HandleScope::Extend() {
-  void** result = current_.next;
+Object** HandleScope::Extend() {
+  Object** result = current_.next;
 
   ASSERT(result == current_.limit);
   // Make sure there's at least one scope on the stack and that the
@@ -68,7 +68,7 @@ void** HandleScope::Extend() {
   // If there's more room in the last block, we use that. This is used
   // for fast creation of scopes after scope barriers.
   if (!impl->Blocks()->is_empty()) {
-    void** limit = &impl->Blocks()->last()[kHandleBlockSize];
+    Object** limit = &impl->Blocks()->last()[kHandleBlockSize];
     if (current_.limit != limit) {
       current_.limit = limit;
     }
@@ -96,10 +96,10 @@ void HandleScope::DeleteExtensions() {
 }
 
 
-void HandleScope::ZapRange(void** start, void** end) {
+void HandleScope::ZapRange(Object** start, Object** end) {
   if (start == NULL) return;
-  for (void** p = start; p < end; p++) {
-    *p = reinterpret_cast<void*>(v8::internal::kHandleZapValue);
+  for (Object** p = start; p < end; p++) {
+    *reinterpret_cast<Address*>(p) = v8::internal::kHandleZapValue;
   }
 }
 
@@ -164,8 +164,11 @@ void SetExpectedNofPropertiesFromEstimate(Handle<JSFunction> func,
 
 
 void NormalizeProperties(Handle<JSObject> object,
-                         PropertyNormalizationMode mode) {
-  CALL_HEAP_FUNCTION_VOID(object->NormalizeProperties(mode));
+                         PropertyNormalizationMode mode,
+                         int expected_additional_properties) {
+  CALL_HEAP_FUNCTION_VOID(object->NormalizeProperties(
+      mode,
+      expected_additional_properties));
 }
 
 
@@ -222,6 +225,12 @@ Handle<Object> ForceSetProperty(Handle<JSObject> object,
 }
 
 
+Handle<Object> ForceDeleteProperty(Handle<JSObject> object,
+                                   Handle<Object> key) {
+  CALL_HEAP_FUNCTION(Runtime::ForceDeleteObjectProperty(object, key), Object);
+}
+
+
 Handle<Object> IgnoreAttributesAndSetLocalProperty(
     Handle<JSObject> object,
     Handle<String> key,
@@ -230,6 +239,7 @@ Handle<Object> IgnoreAttributesAndSetLocalProperty(
   CALL_HEAP_FUNCTION(object->
       IgnoreAttributesAndSetLocalProperty(*key, *value, attributes), Object);
 }
+
 
 Handle<Object> SetPropertyWithInterceptor(Handle<JSObject> object,
                                           Handle<String> key,
@@ -282,10 +292,11 @@ Handle<Object> GetHiddenProperties(Handle<JSObject> obj,
     // hidden symbols hash code is zero (and no other string has hash
     // code zero) it will always occupy the first entry if present.
     DescriptorArray* descriptors = obj->map()->instance_descriptors();
-    DescriptorReader r(descriptors, 0);  // Explicitly position reader at zero.
-    if (!r.eos() && (r.GetKey() == *key) && r.IsProperty()) {
-      ASSERT(r.type() == FIELD);
-      return Handle<Object>(obj->FastPropertyAt(r.GetFieldIndex()));
+    if ((descriptors->number_of_descriptors() > 0) &&
+        (descriptors->GetKey(0) == *key) &&
+        descriptors->IsProperty(0)) {
+      ASSERT(descriptors->GetType(0) == FIELD);
+      return Handle<Object>(obj->FastPropertyAt(descriptors->GetFieldIndex(0)));
     }
   }
 
@@ -308,13 +319,15 @@ Handle<Object> GetHiddenProperties(Handle<JSObject> obj,
 
 Handle<Object> DeleteElement(Handle<JSObject> obj,
                              uint32_t index) {
-  CALL_HEAP_FUNCTION(obj->DeleteElement(index), Object);
+  CALL_HEAP_FUNCTION(obj->DeleteElement(index, JSObject::NORMAL_DELETION),
+                     Object);
 }
 
 
 Handle<Object> DeleteProperty(Handle<JSObject> obj,
                               Handle<String> prop) {
-  CALL_HEAP_FUNCTION(obj->DeleteProperty(*prop), Object);
+  CALL_HEAP_FUNCTION(obj->DeleteProperty(*prop, JSObject::NORMAL_DELETION),
+                     Object);
 }
 
 
@@ -331,6 +344,14 @@ Handle<String> SubString(Handle<String> str, int start, int end) {
 Handle<Object> SetElement(Handle<JSObject> object,
                           uint32_t index,
                           Handle<Object> value) {
+  if (object->HasPixelElements()) {
+    if (!value->IsSmi() && !value->IsHeapNumber() && !value->IsUndefined()) {
+      bool has_exception;
+      Handle<Object> number = Execution::ToNumber(value, &has_exception);
+      if (has_exception) return Handle<Object>();
+      value = number;
+    }
+  }
   CALL_HEAP_FUNCTION(object->SetElement(index, *value), Object);
 }
 
@@ -363,10 +384,10 @@ static void ClearWrapperCache(Persistent<v8::Value> handle, void*) {
 
 
 Handle<JSValue> GetScriptWrapper(Handle<Script> script) {
-  Handle<Object> cache(reinterpret_cast<Object**>(script->wrapper()->proxy()));
-  if (!cache.is_null()) {
+  if (script->wrapper()->proxy() != NULL) {
     // Return the script wrapper directly from the cache.
-    return Handle<JSValue>(JSValue::cast(*cache));
+    return Handle<JSValue>(
+        reinterpret_cast<JSValue**>(script->wrapper()->proxy()));
   }
 
   // Construct a new script wrapper.
@@ -579,12 +600,13 @@ Handle<FixedArray> GetEnumPropertyKeys(Handle<JSObject> object) {
     int num_enum = object->NumberOfEnumProperties();
     Handle<FixedArray> storage = Factory::NewFixedArray(num_enum);
     Handle<FixedArray> sort_array = Factory::NewFixedArray(num_enum);
-    for (DescriptorReader r(object->map()->instance_descriptors());
-         !r.eos();
-         r.advance()) {
-      if (r.IsProperty() && !r.IsDontEnum()) {
-        (*storage)->set(index, r.GetKey());
-        (*sort_array)->set(index, Smi::FromInt(r.GetDetails().index()));
+    Handle<DescriptorArray> descs =
+        Handle<DescriptorArray>(object->map()->instance_descriptors());
+    for (int i = 0; i < descs->number_of_descriptors(); i++) {
+      if (descs->IsProperty(i) && !descs->IsDontEnum(i)) {
+        (*storage)->set(index, descs->GetKey(i));
+        PropertyDetails details(descs->GetDetails(i));
+        (*sort_array)->set(index, Smi::FromInt(details.index()));
         index++;
       }
     }
@@ -632,13 +654,17 @@ bool CompileLazyInLoop(Handle<JSFunction> function, ClearExceptionFlag flag) {
 
 OptimizedObjectForAddingMultipleProperties::
 OptimizedObjectForAddingMultipleProperties(Handle<JSObject> object,
+                                           int expected_additional_properties,
                                            bool condition) {
   object_ = object;
   if (condition && object_->HasFastProperties()) {
     // Normalize the properties of object to avoid n^2 behavior
-    // when extending the object multiple properties.
+    // when extending the object multiple properties. Indicate the number of
+    // properties to be added.
     unused_property_fields_ = object->map()->unused_property_fields();
-    NormalizeProperties(object_, KEEP_INOBJECT_PROPERTIES);
+    NormalizeProperties(object_,
+                        KEEP_INOBJECT_PROPERTIES,
+                        expected_additional_properties);
     has_been_transformed_ = true;
 
   } else {

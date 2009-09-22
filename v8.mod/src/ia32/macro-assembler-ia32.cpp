@@ -1,4 +1,4 @@
-// Copyright 2006-2008 the V8 project authors. All rights reserved.
+// Copyright 2006-2009 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -54,41 +54,47 @@ static void RecordWriteHelper(MacroAssembler* masm,
                               Register scratch) {
   Label fast;
 
-  // Compute the page address from the heap object pointer, leave it
-  // in 'object'.
+  // Compute the page start address from the heap object pointer, and reuse
+  // the 'object' register for it.
   masm->and_(object, ~Page::kPageAlignmentMask);
+  Register page_start = object;
 
-  // Compute the bit addr in the remembered set, leave it in "addr".
-  masm->sub(addr, Operand(object));
+  // Compute the bit addr in the remembered set/index of the pointer in the
+  // page. Reuse 'addr' as pointer_offset.
+  masm->sub(addr, Operand(page_start));
   masm->shr(addr, kObjectAlignmentBits);
+  Register pointer_offset = addr;
 
   // If the bit offset lies beyond the normal remembered set range, it is in
   // the extra remembered set area of a large object.
-  masm->cmp(addr, Page::kPageSize / kPointerSize);
+  masm->cmp(pointer_offset, Page::kPageSize / kPointerSize);
   masm->j(less, &fast);
 
-  // Adjust 'addr' to be relative to the start of the extra remembered set
-  // and the page address in 'object' to be the address of the extra
-  // remembered set.
-  masm->sub(Operand(addr), Immediate(Page::kPageSize / kPointerSize));
-  // Load the array length into 'scratch' and multiply by four to get the
-  // size in bytes of the elements.
-  masm->mov(scratch, Operand(object, Page::kObjectStartOffset
-                                     + FixedArray::kLengthOffset));
-  masm->shl(scratch, kObjectAlignmentBits);
-  // Add the page header, array header, and array body size to the page
-  // address.
-  masm->add(Operand(object), Immediate(Page::kObjectStartOffset
-                                       + Array::kHeaderSize));
-  masm->add(object, Operand(scratch));
+  // Adjust 'page_start' so that addressing using 'pointer_offset' hits the
+  // extra remembered set after the large object.
 
+  // Find the length of the large object (FixedArray).
+  masm->mov(scratch, Operand(page_start, Page::kObjectStartOffset
+                                         + FixedArray::kLengthOffset));
+  Register array_length = scratch;
+
+  // Extra remembered set starts right after the large object (a FixedArray), at
+  //   page_start + kObjectStartOffset + objectSize
+  // where objectSize is FixedArray::kHeaderSize + kPointerSize * array_length.
+  // Add the delta between the end of the normal RSet and the start of the
+  // extra RSet to 'page_start', so that addressing the bit using
+  // 'pointer_offset' hits the extra RSet words.
+  masm->lea(page_start,
+            Operand(page_start, array_length, times_pointer_size,
+                    Page::kObjectStartOffset + FixedArray::kHeaderSize
+                        - Page::kRSetEndOffset));
 
   // NOTE: For now, we use the bit-test-and-set (bts) x86 instruction
   // to limit code size. We should probably evaluate this decision by
   // measuring the performance of an equivalent implementation using
   // "simpler" instructions
   masm->bind(&fast);
-  masm->bts(Operand(object, 0), addr);
+  masm->bts(Operand(page_start, Page::kRSetOffset), pointer_offset);
 }
 
 
@@ -146,43 +152,30 @@ void MacroAssembler::RecordWrite(Register object, int offset,
   // for the remembered set bits.
   Label done;
 
-  // This optimization cannot survive serialization and deserialization,
-  // so we disable as long as serialization can take place.
-  int32_t new_space_start =
-      reinterpret_cast<int32_t>(ExternalReference::new_space_start().address());
-  if (Serializer::enabled() || new_space_start < 0) {
-    // Cannot do smart bit-twiddling. Need to do two consecutive checks.
-    // Check for Smi first.
-    test(value, Immediate(kSmiTagMask));
-    j(zero, &done);
-    // Test that the object address is not in the new space.  We cannot
-    // set remembered set bits in the new space.
+  // Skip barrier if writing a smi.
+  ASSERT_EQ(0, kSmiTag);
+  test(value, Immediate(kSmiTagMask));
+  j(zero, &done);
+
+  if (Serializer::enabled()) {
+    // Can't do arithmetic on external references if it might get serialized.
     mov(value, Operand(object));
     and_(value, Heap::NewSpaceMask());
     cmp(Operand(value), Immediate(ExternalReference::new_space_start()));
     j(equal, &done);
   } else {
-    // move the value SmiTag into the sign bit
-    shl(value, 31);
-    // combine the object with value SmiTag
-    or_(value, Operand(object));
-    // remove the uninteresing bits inside the page
-    and_(value, Heap::NewSpaceMask() | (1 << 31));
-    // xor has two effects:
-    // - if the value was a smi, then the result will be negative
-    // - if the object is pointing into new space area the page bits will
-    //   all be zero
-    xor_(value, new_space_start | (1 << 31));
-    // Check for both conditions in one branch
-    j(less_equal, &done);
+    int32_t new_space_start = reinterpret_cast<int32_t>(
+        ExternalReference::new_space_start().address());
+    lea(value, Operand(object, -new_space_start));
+    and_(value, Heap::NewSpaceMask());
+    j(equal, &done);
   }
 
   if ((offset > 0) && (offset < Page::kMaxHeapObjectSize)) {
     // Compute the bit offset in the remembered set, leave it in 'value'.
-    mov(value, Operand(object));
+    lea(value, Operand(object, offset));
     and_(value, Page::kPageAlignmentMask);
-    add(Operand(value), Immediate(offset));
-    shr(value, kObjectAlignmentBits);
+    shr(value, kPointerSizeLog2);
 
     // Compute the page address from the heap object pointer, leave it in
     // 'object'.
@@ -192,16 +185,19 @@ void MacroAssembler::RecordWrite(Register object, int offset,
     // to limit code size. We should probably evaluate this decision by
     // measuring the performance of an equivalent implementation using
     // "simpler" instructions
-    bts(Operand(object, 0), value);
+    bts(Operand(object, Page::kRSetOffset), value);
   } else {
     Register dst = scratch;
     if (offset != 0) {
       lea(dst, Operand(object, offset));
     } else {
       // array access: calculate the destination address in the same manner as
-      // KeyedStoreIC::GenerateGeneric
-      lea(dst,
-          Operand(object, dst, times_2, Array::kHeaderSize - kHeapObjectTag));
+      // KeyedStoreIC::GenerateGeneric.  Multiply a smi by 2 to get an offset
+      // into an array of words.
+      ASSERT_EQ(1, kSmiTagSize);
+      ASSERT_EQ(0, kSmiTag);
+      lea(dst, Operand(object, dst, times_half_pointer_size,
+                       FixedArray::kHeaderSize - kHeapObjectTag));
     }
     // If we are already generating a shared stub, not inlining the
     // record write code isn't going to save us any memory.
@@ -323,7 +319,7 @@ void MacroAssembler::CmpInstanceType(Register map, InstanceType type) {
 
 
 void MacroAssembler::FCmp() {
-  fcompp();
+  fucompp();
   push(eax);
   fnstsw_ax();
   sahf();
@@ -358,7 +354,7 @@ void MacroAssembler::EnterExitFrame(StackFrame::Type type) {
   ASSERT(type == StackFrame::EXIT || type == StackFrame::EXIT_DEBUG);
 
   // Setup the frame structure on the stack.
-  ASSERT(ExitFrameConstants::kPPDisplacement == +2 * kPointerSize);
+  ASSERT(ExitFrameConstants::kCallerSPDisplacement == +2 * kPointerSize);
   ASSERT(ExitFrameConstants::kCallerPCOffset == +1 * kPointerSize);
   ASSERT(ExitFrameConstants::kCallerFPOffset ==  0 * kPointerSize);
   push(ebp);
@@ -448,7 +444,8 @@ void MacroAssembler::LeaveExitFrame(StackFrame::Type type) {
 
 void MacroAssembler::PushTryHandler(CodeLocation try_location,
                                     HandlerType type) {
-  ASSERT(StackHandlerConstants::kSize == 6 * kPointerSize);  // adjust this code
+  // Adjust this code if not the case.
+  ASSERT(StackHandlerConstants::kSize == 4 * kPointerSize);
   // The pc (return address) is already on TOS.
   if (try_location == IN_JAVASCRIPT) {
     if (type == TRY_CATCH_HANDLER) {
@@ -456,23 +453,18 @@ void MacroAssembler::PushTryHandler(CodeLocation try_location,
     } else {
       push(Immediate(StackHandler::TRY_FINALLY));
     }
-    push(Immediate(Smi::FromInt(StackHandler::kCodeNotPresent)));
     push(ebp);
-    push(edi);
   } else {
     ASSERT(try_location == IN_JS_ENTRY);
-    // The parameter pointer is meaningless here and ebp does not
-    // point to a JS frame. So we save NULL for both pp and ebp. We
-    // expect the code throwing an exception to check ebp before
-    // dereferencing it to restore the context.
+    // The frame pointer does not point to a JS frame so we save NULL
+    // for ebp. We expect the code throwing an exception to check ebp
+    // before dereferencing it to restore the context.
     push(Immediate(StackHandler::ENTRY));
-    push(Immediate(Smi::FromInt(StackHandler::kCodeNotPresent)));
-    push(Immediate(0));  // NULL frame pointer
-    push(Immediate(0));  // NULL parameter pointer
+    push(Immediate(0));  // NULL frame pointer.
   }
-  // Cached TOS.
-  mov(eax, Operand::StaticVariable(ExternalReference(Top::k_handler_address)));
-  // Link this handler.
+  // Save the current handler as the next handler.
+  push(Operand::StaticVariable(ExternalReference(Top::k_handler_address)));
+  // Link this handler as the new current one.
   mov(Operand::StaticVariable(ExternalReference(Top::k_handler_address)), esp);
 }
 
@@ -561,8 +553,8 @@ Register MacroAssembler::CheckMaps(JSObject* object, Register object_reg,
 
 
 void MacroAssembler::CheckAccessGlobalProxy(Register holder_reg,
-                                          Register scratch,
-                                          Label* miss) {
+                                            Register scratch,
+                                            Label* miss) {
   Label same_contexts;
 
   ASSERT(!holder_reg.is(scratch));
@@ -625,6 +617,153 @@ void MacroAssembler::CheckAccessGlobalProxy(Register holder_reg,
   j(not_equal, miss, not_taken);
 
   bind(&same_contexts);
+}
+
+
+void MacroAssembler::LoadAllocationTopHelper(Register result,
+                                             Register result_end,
+                                             Register scratch,
+                                             AllocationFlags flags) {
+  ExternalReference new_space_allocation_top =
+      ExternalReference::new_space_allocation_top_address();
+
+  // Just return if allocation top is already known.
+  if ((flags & RESULT_CONTAINS_TOP) != 0) {
+    // No use of scratch if allocation top is provided.
+    ASSERT(scratch.is(no_reg));
+#ifdef DEBUG
+    // Assert that result actually contains top on entry.
+    cmp(result, Operand::StaticVariable(new_space_allocation_top));
+    Check(equal, "Unexpected allocation top");
+#endif
+    return;
+  }
+
+  // Move address of new object to result. Use scratch register if available.
+  if (scratch.is(no_reg)) {
+    mov(result, Operand::StaticVariable(new_space_allocation_top));
+  } else {
+    ASSERT(!scratch.is(result_end));
+    mov(Operand(scratch), Immediate(new_space_allocation_top));
+    mov(result, Operand(scratch, 0));
+  }
+}
+
+
+void MacroAssembler::UpdateAllocationTopHelper(Register result_end,
+                                               Register scratch) {
+  ExternalReference new_space_allocation_top =
+      ExternalReference::new_space_allocation_top_address();
+
+  // Update new top. Use scratch if available.
+  if (scratch.is(no_reg)) {
+    mov(Operand::StaticVariable(new_space_allocation_top), result_end);
+  } else {
+    mov(Operand(scratch, 0), result_end);
+  }
+}
+
+
+void MacroAssembler::AllocateObjectInNewSpace(int object_size,
+                                              Register result,
+                                              Register result_end,
+                                              Register scratch,
+                                              Label* gc_required,
+                                              AllocationFlags flags) {
+  ASSERT(!result.is(result_end));
+
+  // Load address of new object into result.
+  LoadAllocationTopHelper(result, result_end, scratch, flags);
+
+  // Calculate new top and bail out if new space is exhausted.
+  ExternalReference new_space_allocation_limit =
+      ExternalReference::new_space_allocation_limit_address();
+  lea(result_end, Operand(result, object_size));
+  cmp(result_end, Operand::StaticVariable(new_space_allocation_limit));
+  j(above, gc_required, not_taken);
+
+  // Update allocation top.
+  UpdateAllocationTopHelper(result_end, scratch);
+
+  // Tag result if requested.
+  if ((flags & TAG_OBJECT) != 0) {
+    or_(Operand(result), Immediate(kHeapObjectTag));
+  }
+}
+
+
+void MacroAssembler::AllocateObjectInNewSpace(int header_size,
+                                              ScaleFactor element_size,
+                                              Register element_count,
+                                              Register result,
+                                              Register result_end,
+                                              Register scratch,
+                                              Label* gc_required,
+                                              AllocationFlags flags) {
+  ASSERT(!result.is(result_end));
+
+  // Load address of new object into result.
+  LoadAllocationTopHelper(result, result_end, scratch, flags);
+
+  // Calculate new top and bail out if new space is exhausted.
+  ExternalReference new_space_allocation_limit =
+      ExternalReference::new_space_allocation_limit_address();
+  lea(result_end, Operand(result, element_count, element_size, header_size));
+  cmp(result_end, Operand::StaticVariable(new_space_allocation_limit));
+  j(above, gc_required);
+
+  // Update allocation top.
+  UpdateAllocationTopHelper(result_end, scratch);
+
+  // Tag result if requested.
+  if ((flags & TAG_OBJECT) != 0) {
+    or_(Operand(result), Immediate(kHeapObjectTag));
+  }
+}
+
+
+void MacroAssembler::AllocateObjectInNewSpace(Register object_size,
+                                              Register result,
+                                              Register result_end,
+                                              Register scratch,
+                                              Label* gc_required,
+                                              AllocationFlags flags) {
+  ASSERT(!result.is(result_end));
+
+  // Load address of new object into result.
+  LoadAllocationTopHelper(result, result_end, scratch, flags);
+
+  // Calculate new top and bail out if new space is exhausted.
+  ExternalReference new_space_allocation_limit =
+      ExternalReference::new_space_allocation_limit_address();
+  if (!object_size.is(result_end)) {
+    mov(result_end, object_size);
+  }
+  add(result_end, Operand(result));
+  cmp(result_end, Operand::StaticVariable(new_space_allocation_limit));
+  j(above, gc_required, not_taken);
+
+  // Update allocation top.
+  UpdateAllocationTopHelper(result_end, scratch);
+
+  // Tag result if requested.
+  if ((flags & TAG_OBJECT) != 0) {
+    or_(Operand(result), Immediate(kHeapObjectTag));
+  }
+}
+
+
+void MacroAssembler::UndoAllocationInNewSpace(Register object) {
+  ExternalReference new_space_allocation_top =
+      ExternalReference::new_space_allocation_top_address();
+
+  // Make sure the object has no tag before resetting top.
+  and_(Operand(object), Immediate(~kHeapObjectTagMask));
+#ifdef DEBUG
+  cmp(object, Operand::StaticVariable(new_space_allocation_top));
+  Check(below, "Undo allocation of non allocated memory");
+#endif
+  mov(Operand::StaticVariable(new_space_allocation_top), object);
 }
 
 
@@ -757,7 +896,8 @@ void MacroAssembler::CallRuntime(Runtime::Function* f, int num_arguments) {
 
 
 void MacroAssembler::TailCallRuntime(const ExternalReference& ext,
-                                     int num_arguments) {
+                                     int num_arguments,
+                                     int result_size) {
   // TODO(1236192): Most runtime routines don't need the number of
   // arguments passed in because it is constant. At some point we
   // should remove this need and make the runtime routine entry code
@@ -770,7 +910,7 @@ void MacroAssembler::TailCallRuntime(const ExternalReference& ext,
 void MacroAssembler::JumpToBuiltin(const ExternalReference& ext) {
   // Set the entry point and jump to the C entry runtime stub.
   mov(ebx, Immediate(ext));
-  CEntryStub ces;
+  CEntryStub ces(1);
   jmp(ces.GetCode(), RelocInfo::CODE_TARGET);
 }
 
@@ -1031,7 +1171,7 @@ void MacroAssembler::Abort(const char* msg) {
 
 
 CodePatcher::CodePatcher(byte* address, int size)
-  : address_(address), size_(size), masm_(address, size + Assembler::kGap) {
+    : address_(address), size_(size), masm_(address, size + Assembler::kGap) {
   // Create a new macro assembler pointing to the address of the code to patch.
   // The size is adjusted with kGap on order for the assembler to generate size
   // bytes of instructions without failing with buffer size constraints.

@@ -49,9 +49,17 @@ Handle<FixedArray> Factory::NewFixedArrayWithHoles(int size) {
 }
 
 
-Handle<Dictionary> Factory::NewDictionary(int at_least_space_for) {
+Handle<StringDictionary> Factory::NewStringDictionary(int at_least_space_for) {
   ASSERT(0 <= at_least_space_for);
-  CALL_HEAP_FUNCTION(Dictionary::Allocate(at_least_space_for), Dictionary);
+  CALL_HEAP_FUNCTION(StringDictionary::Allocate(at_least_space_for),
+                     StringDictionary);
+}
+
+
+Handle<NumberDictionary> Factory::NewNumberDictionary(int at_least_space_for) {
+  ASSERT(0 <= at_least_space_for);
+  CALL_HEAP_FUNCTION(NumberDictionary::Allocate(at_least_space_for),
+                     NumberDictionary);
 }
 
 
@@ -79,8 +87,10 @@ Handle<String> Factory::NewStringFromUtf8(Vector<const char> string,
 }
 
 
-Handle<String> Factory::NewStringFromTwoByte(Vector<const uc16> string) {
-  CALL_HEAP_FUNCTION(Heap::AllocateStringFromTwoByte(string), String);
+Handle<String> Factory::NewStringFromTwoByte(Vector<const uc16> string,
+                                             PretenureFlag pretenure) {
+  CALL_HEAP_FUNCTION(Heap::AllocateStringFromTwoByte(string, pretenure),
+                     String);
 }
 
 
@@ -92,8 +102,6 @@ Handle<String> Factory::NewRawTwoByteString(int length,
 
 Handle<String> Factory::NewConsString(Handle<String> first,
                                       Handle<String> second) {
-  if (first->length() == 0) return second;
-  if (second->length() == 0) return first;
   CALL_HEAP_FUNCTION(Heap::AllocateConsString(*first, *second), String);
 }
 
@@ -177,9 +185,12 @@ Handle<Script> Factory::NewScript(Handle<String> source) {
   script->set_column_offset(Smi::FromInt(0));
   script->set_data(Heap::undefined_value());
   script->set_context_data(Heap::undefined_value());
-  script->set_type(Smi::FromInt(SCRIPT_TYPE_NORMAL));
+  script->set_type(Smi::FromInt(Script::TYPE_NORMAL));
+  script->set_compilation_type(Smi::FromInt(Script::COMPILATION_TYPE_HOST));
   script->set_wrapper(*wrapper);
   script->set_line_ends(Heap::undefined_value());
+  script->set_eval_from_function(Heap::undefined_value());
+  script->set_eval_from_instructions_offset(Smi::FromInt(0));
 
   return script;
 }
@@ -198,6 +209,16 @@ Handle<Proxy> Factory::NewProxy(const AccessorDescriptor* desc) {
 Handle<ByteArray> Factory::NewByteArray(int length, PretenureFlag pretenure) {
   ASSERT(0 <= length);
   CALL_HEAP_FUNCTION(Heap::AllocateByteArray(length, pretenure), ByteArray);
+}
+
+
+Handle<PixelArray> Factory::NewPixelArray(int length,
+                                          uint8_t* external_pointer,
+                                          PretenureFlag pretenure) {
+  ASSERT(0 <= length);
+  CALL_HEAP_FUNCTION(Heap::AllocatePixelArray(length,
+                                              external_pointer,
+                                              pretenure), PixelArray);
 }
 
 
@@ -380,10 +401,12 @@ Handle<Object> Factory::NewError(const char* maker,
                                  const char* type,
                                  Handle<JSArray> args) {
   Handle<String> make_str = Factory::LookupAsciiSymbol(maker);
-  Handle<JSFunction> fun =
-      Handle<JSFunction>(
-          JSFunction::cast(
-              Top::builtins()->GetProperty(*make_str)));
+  Handle<Object> fun_obj(Top::builtins()->GetProperty(*make_str));
+  // If the builtins haven't been properly configured yet this error
+  // constructor may not have been defined.  Bail out.
+  if (!fun_obj->IsJSFunction())
+    return Factory::undefined_value();
+  Handle<JSFunction> fun = Handle<JSFunction>::cast(fun_obj);
   Handle<Object> type_obj = Factory::LookupAsciiSymbol(type);
   Object** argv[2] = { type_obj.location(),
                        Handle<Object>::cast(args).location() };
@@ -561,12 +584,10 @@ Handle<DescriptorArray> Factory::CopyAppendCallbackDescriptors(
   int descriptor_count = 0;
 
   // Copy the descriptors from the array.
-  DescriptorWriter w(*result);
-  for (DescriptorReader r(*array); !r.eos(); r.advance()) {
-    if (!r.IsNullDescriptor()) {
-      w.WriteFrom(&r);
+  for (int i = 0; i < array->number_of_descriptors(); i++) {
+    if (array->GetType(i) != NULL_DESCRIPTOR) {
+      result->CopyFrom(descriptor_count++, *array, i);
     }
-    descriptor_count++;
   }
 
   // Number of duplicates detected.
@@ -585,7 +606,7 @@ Handle<DescriptorArray> Factory::CopyAppendCallbackDescriptors(
     if (result->LinearSearch(*key, descriptor_count) ==
         DescriptorArray::kNotFound) {
       CallbacksDescriptor desc(*key, *entry, entry->property_attributes());
-      w.Write(&desc);
+      result->Set(descriptor_count, &desc);
       descriptor_count++;
     } else {
       duplicates++;
@@ -595,13 +616,11 @@ Handle<DescriptorArray> Factory::CopyAppendCallbackDescriptors(
   // If duplicates were detected, allocate a result of the right size
   // and transfer the elements.
   if (duplicates > 0) {
+    int number_of_descriptors = result->number_of_descriptors() - duplicates;
     Handle<DescriptorArray> new_result =
-        NewDescriptorArray(result->number_of_descriptors() - duplicates);
-    DescriptorWriter w(*new_result);
-    DescriptorReader r(*result);
-    while (!w.eos()) {
-      w.WriteFrom(&r);
-      r.advance();
+        NewDescriptorArray(number_of_descriptors);
+    for (int i = 0; i < number_of_descriptors; i++) {
+      new_result->CopyFrom(i, *result, i);
     }
     result = new_result;
   }
@@ -616,6 +635,14 @@ Handle<JSObject> Factory::NewJSObject(Handle<JSFunction> constructor,
                                       PretenureFlag pretenure) {
   CALL_HEAP_FUNCTION(Heap::AllocateJSObject(*constructor, pretenure), JSObject);
 }
+
+
+Handle<GlobalObject> Factory::NewGlobalObject(
+    Handle<JSFunction> constructor) {
+  CALL_HEAP_FUNCTION(Heap::AllocateGlobalObject(*constructor),
+                     GlobalObject);
+}
+
 
 
 Handle<JSObject> Factory::NewJSObjectFromMap(Handle<Map> map) {
@@ -646,10 +673,11 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(Handle<String> name) {
 }
 
 
-Handle<Dictionary> Factory::DictionaryAtNumberPut(Handle<Dictionary> dictionary,
-                                                  uint32_t key,
-                                                  Handle<Object> value) {
-  CALL_HEAP_FUNCTION(dictionary->AtNumberPut(key, *value), Dictionary);
+Handle<NumberDictionary> Factory::DictionaryAtNumberPut(
+    Handle<NumberDictionary> dictionary,
+    uint32_t key,
+    Handle<Object> value) {
+  CALL_HEAP_FUNCTION(dictionary->AtNumberPut(key, *value), NumberDictionary);
 }
 
 

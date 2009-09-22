@@ -37,13 +37,95 @@
 #include "platform.h"
 
 
+
+
+
+// Test for a NaN (not a number) value - usually defined in math.h
+int isnan(double x) {
+  return _isnan(x);
+}
+
+
+// Test for infinity - usually defined in math.h
+int isinf(double x) {
+  return (_fpclass(x) & (_FPCLASS_PINF | _FPCLASS_NINF)) != 0;
+}
+
+// Test if x is less than y and both nominal - usually defined in math.h
+int isless(double x, double y) {
+  return isnan(x) || isnan(y) ? 0 : x < y;
+}
+
+
+// Test if x is greater than y and both nominal - usually defined in math.h
+int isgreater(double x, double y) {
+  return isnan(x) || isnan(y) ? 0 : x > y;
+}
+
+
+// Classify floating point number - usually defined in math.h
+int fpclassify(double x) {
+  // Use the MS-specific _fpclass() for classification.
+  int flags = _fpclass(x);
+
+  // Determine class. We cannot use a switch statement because
+  // the _FPCLASS_ constants are defined as flags.
+  if (flags & (_FPCLASS_PN | _FPCLASS_NN)) return FP_NORMAL;
+  if (flags & (_FPCLASS_PZ | _FPCLASS_NZ)) return FP_ZERO;
+  if (flags & (_FPCLASS_PD | _FPCLASS_ND)) return FP_SUBNORMAL;
+  if (flags & (_FPCLASS_PINF | _FPCLASS_NINF)) return FP_INFINITE;
+
+  // All cases should be covered by the code above.
+  ASSERT(flags & (_FPCLASS_SNAN | _FPCLASS_QNAN));
+  return FP_NAN;
+}
+
+
+// Test sign - usually defined in math.h
+int signbit(double x) {
+  // We need to take care of the special case of both positive
+  // and negative versions of zero.
+  if (x == 0)
+    return _fpclass(x) & _FPCLASS_NZ;
+  else
+    return x < 0;
+}
+
+
+// Case-insensitive bounded string comparisons. Use stricmp() on Win32. Usually
+// defined in strings.h.
+int strncasecmp(const char* s1, const char* s2, int n) {
+  return _strnicmp(s1, s2, n);
+}
+
+int random() {
+  return rand();
+}
+
+
 namespace v8 {
 namespace internal {
+
+// Test for finite value - usually defined in math.h
+int isfinite(double x) {
+  return _finite(x);
+}
 
 // Give V8 the opportunity to override the default ceil behaviour.
 double ceiling(double x) {
   UNIMPLEMENTED();
   return 0;
+}
+
+
+void OS::StrNCpy(Vector<char> dest, const char* src, size_t n) {
+	if(n>dest.length()){
+		n=dest.length();
+	}
+  int result = n;
+	memcpy(dest.start(), src, n) ;
+	USE(result);
+  ASSERT(result == 0);
 }
 
 
@@ -80,7 +162,7 @@ int64_t OS::Ticks() {
 
 // Returns a string identifying the current timezone taking into
 // account daylight saving.
-char* OS::LocalTimezone(double time) {
+const char* OS::LocalTimezone(double time) {
   UNIMPLEMENTED();
   return "<none>";
 }
@@ -98,6 +180,14 @@ double OS::DaylightSavingsOffset(double time) {
 double OS::LocalTimeOffset() {
   UNIMPLEMENTED();
   return 0;
+}
+
+int OS::ActivationFrameAlignment() {
+  return 8;  // guess for mips
+}
+
+FILE* OS::FOpen(const char* path, const char* mode) {
+  return fopen( path, mode);
 }
 
 
@@ -130,14 +220,16 @@ void OS::VPrintError(const char* format, va_list args) {
   vfprintf(stderr, format, args);
 }
 
-
-int OS::SNPrintF(char* str, size_t size, const char* format, ...) {
+int OS::SNPrintF(Vector<char> str, const char* format, ...){
+//int OS::SNPrintF(char* str, size_t size, const char* format, ...) {
   UNIMPLEMENTED();
   return 0;
 }
 
-
-int OS::VSNPrintF(char* str, size_t size, const char* format, va_list args) {
+int OS::VSNPrintF(Vector<char> str,
+                       const char* format,
+											 va_list args){
+//int OS::VSNPrintF(char* str, size_t size, const char* format, va_list args) {
   UNIMPLEMENTED();
   return 0;
 }
@@ -194,8 +286,9 @@ void OS::Sleep(int milliseconds) {
 
 
 void OS::Abort() {
+	throw (L"v8 abortion");
   // Minimalistic implementation for bootstrapping.
-  abort();
+  UNIMPLEMENTED();
 }
 
 
@@ -222,7 +315,7 @@ int OS::StackWalk(Vector<OS::StackFrame> frames) {
 }
 
 
-VirtualMemory::VirtualMemory(size_t size, void* address_hint) {
+VirtualMemory::VirtualMemory(size_t size) {
   UNIMPLEMENTED();
 }
 
@@ -393,7 +486,7 @@ class NullSemaphore : public Semaphore {
 
 Semaphore* OS::CreateSemaphore(int count) {
   UNIMPLEMENTED();
-  return new NullSemaphore(count);
+  return 0;//new NullSemaphore(count);
 }
 
 #ifdef ENABLE_LOGGING_AND_PROFILING

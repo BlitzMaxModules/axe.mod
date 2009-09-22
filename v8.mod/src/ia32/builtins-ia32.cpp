@@ -1,4 +1,4 @@
-// Copyright 2006-2008 the V8 project authors. All rights reserved.
+// Copyright 2006-2009 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -37,7 +37,7 @@ namespace internal {
 
 
 void Builtins::Generate_Adaptor(MacroAssembler* masm, CFunctionId id) {
-  // TODO(1238487): Don't pass the function in a static variable.
+  // TODO(428): Don't pass the function in a static variable.
   ExternalReference passed = ExternalReference::builtin_passed_function();
   __ mov(Operand::StaticVariable(passed), edi);
 
@@ -63,6 +63,25 @@ void Builtins::Generate_JSConstructCall(MacroAssembler* masm) {
   __ CmpObjectType(edi, JS_FUNCTION_TYPE, ecx);
   __ j(not_equal, &non_function_call);
 
+  // Jump to the function-specific construct stub.
+  __ mov(ebx, FieldOperand(edi, JSFunction::kSharedFunctionInfoOffset));
+  __ mov(ebx, FieldOperand(ebx, SharedFunctionInfo::kConstructStubOffset));
+  __ lea(ebx, FieldOperand(ebx, Code::kHeaderSize));
+  __ jmp(Operand(ebx));
+
+  // edi: called object
+  // eax: number of arguments
+  __ bind(&non_function_call);
+
+  // Set expected number of arguments to zero (not changing eax).
+  __ Set(ebx, Immediate(0));
+  __ GetBuiltinEntry(edx, Builtins::CALL_NON_FUNCTION_AS_CONSTRUCTOR);
+  __ jmp(Handle<Code>(builtin(ArgumentsAdaptorTrampoline)),
+         RelocInfo::CODE_TARGET);
+}
+
+
+void Builtins::Generate_JSConstructStubGeneric(MacroAssembler* masm) {
   // Enter a construct frame.
   __ EnterConstructFrame();
 
@@ -110,18 +129,12 @@ void Builtins::Generate_JSConstructCall(MacroAssembler* masm) {
     // eax: initial map
     __ movzx_b(edi, FieldOperand(eax, Map::kInstanceSizeOffset));
     __ shl(edi, kPointerSizeLog2);
-    // Make sure that the maximum heap object size will never cause us
-    // problem here, because it is always greater than the maximum
-    // instance size that can be represented in a byte.
-    ASSERT(Heap::MaxHeapObjectSize() >= (1 << kBitsPerByte));
-    ExternalReference new_space_allocation_top =
-        ExternalReference::new_space_allocation_top_address();
-    __ mov(ebx, Operand::StaticVariable(new_space_allocation_top));
-    __ add(edi, Operand(ebx));  // Calculate new top
-    ExternalReference new_space_allocation_limit =
-        ExternalReference::new_space_allocation_limit_address();
-    __ cmp(edi, Operand::StaticVariable(new_space_allocation_limit));
-    __ j(greater_equal, &rt_call);
+    __ AllocateObjectInNewSpace(edi,
+                                ebx,
+                                edi,
+                                no_reg,
+                                &rt_call,
+                                NO_ALLOCATION_FLAGS);
     // Allocated the JSObject, now initialize the fields.
     // eax: initial map
     // ebx: JSObject
@@ -146,41 +159,44 @@ void Builtins::Generate_JSConstructCall(MacroAssembler* masm) {
       __ j(less, &loop);
     }
 
-    // Mostly done with the JSObject. Add the heap tag and store the new top, so
-    // that we can continue and jump into the continuation code at any time from
-    // now on. Any failures need to undo the setting of the new top, so that the
-    // heap is in a consistent state and verifiable.
+    // Add the object tag to make the JSObject real, so that we can continue and
+    // jump into the continuation code at any time from now on. Any failures
+    // need to undo the allocation, so that the heap is in a consistent state
+    // and verifiable.
     // eax: initial map
     // ebx: JSObject
     // edi: start of next object
     __ or_(Operand(ebx), Immediate(kHeapObjectTag));
-    __ mov(Operand::StaticVariable(new_space_allocation_top), edi);
 
-    // Check if a properties array should be setup and allocate one if needed.
-    // Otherwise initialize the properties to the empty_fixed_array as well.
+    // Check if a non-empty properties array is needed.
+    // Allocate and initialize a FixedArray if it is.
     // eax: initial map
     // ebx: JSObject
     // edi: start of next object
+    // Calculate the total number of properties described by the map.
     __ movzx_b(edx, FieldOperand(eax, Map::kUnusedPropertyFieldsOffset));
-    __ movzx_b(ecx, FieldOperand(eax, Map::kInObjectPropertiesOffset));
+    __ movzx_b(ecx, FieldOperand(eax, Map::kPreAllocatedPropertyFieldsOffset));
+    __ add(edx, Operand(ecx));
     // Calculate unused properties past the end of the in-object properties.
+    __ movzx_b(ecx, FieldOperand(eax, Map::kInObjectPropertiesOffset));
     __ sub(edx, Operand(ecx));
-    __ test(edx, Operand(edx));
     // Done if no extra properties are to be allocated.
     __ j(zero, &allocated);
+    __ Assert(positive, "Property allocation count failed.");
 
     // Scale the number of elements by pointer size and add the header for
     // FixedArrays to the start of the next object calculation from above.
-    // eax: initial map
     // ebx: JSObject
     // edi: start of next object (will be start of FixedArray)
     // edx: number of elements in properties array
-    ASSERT(Heap::MaxHeapObjectSize() >
-           (FixedArray::kHeaderSize + 255*kPointerSize));
-    __ lea(ecx, Operand(edi, edx, times_4, FixedArray::kHeaderSize));
-    __ cmp(ecx, Operand::StaticVariable(new_space_allocation_limit));
-    __ j(greater_equal, &undo_allocation);
-    __ mov(Operand::StaticVariable(new_space_allocation_top), ecx);
+    __ AllocateObjectInNewSpace(FixedArray::kHeaderSize,
+                                times_pointer_size,
+                                edx,
+                                edi,
+                                ecx,
+                                no_reg,
+                                &undo_allocation,
+                                RESULT_CONTAINS_TOP);
 
     // Initialize the FixedArray.
     // ebx: JSObject
@@ -204,7 +220,7 @@ void Builtins::Generate_JSConstructCall(MacroAssembler* masm) {
       __ add(Operand(eax), Immediate(kPointerSize));
       __ bind(&entry);
       __ cmp(eax, Operand(ecx));
-      __ j(less, &loop);
+      __ j(below, &loop);
     }
 
     // Store the initialized FixedArray into the properties field of
@@ -224,15 +240,14 @@ void Builtins::Generate_JSConstructCall(MacroAssembler* masm) {
     // allocated objects unused properties.
     // ebx: JSObject (previous new top)
     __ bind(&undo_allocation);
-    __ xor_(Operand(ebx), Immediate(kHeapObjectTag));  // clear the heap tag
-    __ mov(Operand::StaticVariable(new_space_allocation_top), ebx);
+    __ UndoAllocationInNewSpace(ebx);
   }
 
   // Allocate the new receiver object using the runtime call.
-  // edi: function (constructor)
   __ bind(&rt_call);
   // Must restore edi (constructor) before calling runtime.
   __ mov(edi, Operand(esp, 0));
+  // edi: function (constructor)
   __ push(edi);
   __ CallRuntime(Runtime::kNewObject, 1);
   __ mov(ebx, Operand(eax));  // store result in ebx
@@ -304,17 +319,8 @@ void Builtins::Generate_JSConstructCall(MacroAssembler* masm) {
   __ pop(ecx);
   __ lea(esp, Operand(esp, ebx, times_2, 1 * kPointerSize));  // 1 ~ receiver
   __ push(ecx);
+  __ IncrementCounter(&Counters::constructed_objects, 1);
   __ ret(0);
-
-  // edi: called object
-  // eax: number of arguments
-  __ bind(&non_function_call);
-
-  // Set expected number of arguments to zero (not changing eax).
-  __ Set(ebx, Immediate(0));
-  __ GetBuiltinEntry(edx, Builtins::CALL_NON_FUNCTION_AS_CONSTRUCTOR);
-  __ jmp(Handle<Code>(builtin(ArgumentsAdaptorTrampoline)),
-         RelocInfo::CODE_TARGET);
 }
 
 
@@ -657,7 +663,7 @@ static void EnterArgumentsAdaptorFrame(MacroAssembler* masm) {
   __ mov(ebp, Operand(esp));
 
   // Store the arguments adaptor context sentinel.
-  __ push(Immediate(ArgumentsAdaptorFrame::SENTINEL));
+  __ push(Immediate(Smi::FromInt(StackFrame::ARGUMENTS_ADAPTOR)));
 
   // Push the function on the stack.
   __ push(edi);

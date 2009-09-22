@@ -44,12 +44,6 @@ char* HeapStringAllocator::allocate(unsigned bytes) {
 }
 
 
-NoAllocationStringAllocator::NoAllocationStringAllocator(unsigned bytes) {
-  size_ = bytes;
-  space_ = NewArray<char>(bytes);
-}
-
-
 NoAllocationStringAllocator::NoAllocationStringAllocator(char* memory,
                                                          unsigned size) {
   size_ = size;
@@ -159,7 +153,7 @@ void StringStream::Add(Vector<const char> format, Vector<FmtElm> elms) {
       }
       break;
     }
-    case 'i': case 'd': case 'u': case 'x': case 'c': case 'p': case 'X': {
+    case 'i': case 'd': case 'u': case 'x': case 'c': case 'X': {
       int value = current.data_.u_int_;
       EmbeddedVector<char, 24> formatted;
       int length = OS::SNPrintF(formatted, temp.start(), value);
@@ -169,6 +163,13 @@ void StringStream::Add(Vector<const char> format, Vector<FmtElm> elms) {
     case 'f': case 'g': case 'G': case 'e': case 'E': {
       double value = current.data_.u_double_;
       EmbeddedVector<char, 28> formatted;
+      OS::SNPrintF(formatted, temp.start(), value);
+      Add(formatted.start());
+      break;
+    }
+    case 'p': {
+      void* value = current.data_.u_pointer_;
+      EmbeddedVector<char, 20> formatted;
       OS::SNPrintF(formatted, temp.start(), value);
       Add(formatted.start());
       break;
@@ -343,10 +344,11 @@ void StringStream::PrintUsingMap(JSObject* js_object) {
     Add("<Invalid map>\n");
     return;
   }
-  for (DescriptorReader r(map->instance_descriptors()); !r.eos(); r.advance()) {
-    switch (r.type()) {
+  DescriptorArray* descs = map->instance_descriptors();
+  for (int i = 0; i < descs->number_of_descriptors(); i++) {
+    switch (descs->GetType(i)) {
       case FIELD: {
-        Object* key = r.GetKey();
+        Object* key = descs->GetKey(i);
         if (key->IsString() || key->IsNumber()) {
           int len = 3;
           if (key->IsString()) {
@@ -360,7 +362,7 @@ void StringStream::PrintUsingMap(JSObject* js_object) {
             key->ShortPrint();
           }
           Add(": ");
-          Object* value = js_object->FastPropertyAt(r.GetFieldIndex());
+          Object* value = js_object->FastPropertyAt(descs->GetFieldIndex(i));
           Add("%o\n", value);
         }
       }

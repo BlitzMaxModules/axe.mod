@@ -25,52 +25,19 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "v8.h"
-
-#include "ast.h"
-#include "func-name-inferrer.h"
+#ifndef V8_IA32_REGISTER_ALLOCATOR_IA32_H_
+#define V8_IA32_REGISTER_ALLOCATOR_IA32_H_
 
 namespace v8 {
 namespace internal {
 
-
-void FuncNameInferrer::PushEnclosingName(Handle<String> name) {
-  // Enclosing name is a name of a constructor function. To check
-  // that it is really a constructor, we check that it is not empty
-  // and starts with a capital letter.
-  if (name->length() > 0 && Runtime::IsUpperCaseChar(name->Get(0))) {
-    names_stack_.Add(name);
-  }
-}
-
-
-Handle<String> FuncNameInferrer::MakeNameFromStack() {
-  if (names_stack_.is_empty()) {
-    return Factory::empty_string();
-  } else {
-    return MakeNameFromStackHelper(1, names_stack_.at(0));
-  }
-}
-
-
-Handle<String> FuncNameInferrer::MakeNameFromStackHelper(int pos,
-                                                         Handle<String> prev) {
-  if (pos >= names_stack_.length()) {
-    return prev;
-  } else {
-    Handle<String> curr = Factory::NewConsString(dot_, names_stack_.at(pos));
-    return MakeNameFromStackHelper(pos + 1, Factory::NewConsString(prev, curr));
-  }
-}
-
-
-void FuncNameInferrer::InferFunctionsNames() {
-  Handle<String> func_name = MakeNameFromStack();
-  for (int i = 0; i < funcs_to_infer_.length(); ++i) {
-    funcs_to_infer_[i]->set_inferred_name(func_name);
-  }
-  funcs_to_infer_.Rewind(0);
-}
+class RegisterAllocatorConstants : public AllStatic {
+ public:
+  static const int kNumRegisters = 5;
+  static const int kInvalidRegister = -1;
+};
 
 
 } }  // namespace v8::internal
+
+#endif  // V8_IA32_REGISTER_ALLOCATOR_IA32_H_

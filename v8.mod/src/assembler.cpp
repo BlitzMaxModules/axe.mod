@@ -30,7 +30,7 @@
 
 // The original source code covered by the above license above has been
 // modified significantly by Google Inc.
-// Copyright 2006-2008 the V8 project authors. All rights reserved.
+// Copyright 2006-2009 the V8 project authors. All rights reserved.
 
 #include "v8.h"
 
@@ -42,6 +42,20 @@
 #include "serialize.h"
 #include "stub-cache.h"
 #include "regexp-stack.h"
+#include "ast.h"
+#include "regexp-macro-assembler.h"
+// Include native regexp-macro-assembler.
+#ifdef V8_NATIVE_REGEXP
+#if V8_TARGET_ARCH_IA32
+#include "ia32/regexp-macro-assembler-ia32.h"
+#elif V8_TARGET_ARCH_X64
+#include "x64/regexp-macro-assembler-x64.h"
+#elif V8_TARGET_ARCH_ARM
+#include "arm/regexp-macro-assembler-arm.h"
+#else  // Unknown architecture.
+#error "Unknown architecture."
+#endif  // Target architecture.
+#endif  // V8_NATIVE_REGEXP
 
 namespace v8 {
 namespace internal {
@@ -91,13 +105,13 @@ int Label::pos() const {
 //                     bits, the lowest 7 bits written first.
 //
 // data-jump + pos:    00 1110 11,
-//                     signed int, lowest byte written first
+//                     signed intptr_t, lowest byte written first
 //
 // data-jump + st.pos: 01 1110 11,
-//                     signed int, lowest byte written first
+//                     signed intptr_t, lowest byte written first
 //
 // data-jump + comm.:  10 1110 11,
-//                     signed int, lowest byte written first
+//                     signed intptr_t, lowest byte written first
 //
 const int kMaxRelocModes = 14;
 
@@ -159,7 +173,7 @@ void RelocInfoWriter::WriteTaggedPC(uint32_t pc_delta, int tag) {
 }
 
 
-void RelocInfoWriter::WriteTaggedData(int32_t data_delta, int tag) {
+void RelocInfoWriter::WriteTaggedData(intptr_t data_delta, int tag) {
   *--pos_ = data_delta << kPositionTypeTagBits | tag;
 }
 
@@ -179,11 +193,12 @@ void RelocInfoWriter::WriteExtraTaggedPC(uint32_t pc_delta, int extra_tag) {
 }
 
 
-void RelocInfoWriter::WriteExtraTaggedData(int32_t data_delta, int top_tag) {
+void RelocInfoWriter::WriteExtraTaggedData(intptr_t data_delta, int top_tag) {
   WriteExtraTag(kDataJumpTag, top_tag);
-  for (int i = 0; i < kIntSize; i++) {
+  for (int i = 0; i < kIntptrSize; i++) {
     *--pos_ = data_delta;
-    data_delta = ArithmeticShiftRight(data_delta, kBitsPerByte);
+  // Signed right shift is arithmetic shift.  Tested in test-utils.cc.
+    data_delta = data_delta >> kBitsPerByte;
   }
 }
 
@@ -206,11 +221,13 @@ void RelocInfoWriter::Write(const RelocInfo* rinfo) {
     WriteTaggedPC(pc_delta, kCodeTargetTag);
   } else if (RelocInfo::IsPosition(rmode)) {
     // Use signed delta-encoding for data.
-    int32_t data_delta = rinfo->data() - last_data_;
+    intptr_t data_delta = rinfo->data() - last_data_;
     int pos_type_tag = rmode == RelocInfo::POSITION ? kNonstatementPositionTag
                                                     : kStatementPositionTag;
     // Check if data is small enough to fit in a tagged byte.
-    if (is_intn(data_delta, kSmallDataBits)) {
+    // We cannot use is_intn because data_delta is not an int32_t.
+    if (data_delta >= -(1 << (kSmallDataBits-1)) &&
+        data_delta < 1 << (kSmallDataBits-1)) {
       WriteTaggedPC(pc_delta, kPositionTag);
       WriteTaggedData(data_delta, pos_type_tag);
       last_data_ = rinfo->data();
@@ -264,9 +281,9 @@ inline void RelocIterator::AdvanceReadPC() {
 
 
 void RelocIterator::AdvanceReadData() {
-  int32_t x = 0;
-  for (int i = 0; i < kIntSize; i++) {
-    x |= *--pos_ << i * kBitsPerByte;
+  intptr_t x = 0;
+  for (int i = 0; i < kIntptrSize; i++) {
+    x |= static_cast<intptr_t>(*--pos_) << i * kBitsPerByte;
   }
   rinfo_.data_ += x;
 }
@@ -295,7 +312,8 @@ inline int RelocIterator::GetPositionTypeTag() {
 
 inline void RelocIterator::ReadTaggedData() {
   int8_t signed_b = *pos_;
-  rinfo_.data_ += ArithmeticShiftRight(signed_b, kPositionTypeTagBits);
+  // Signed right shift is arithmetic shift.  Tested in test-utils.cc.
+  rinfo_.data_ += signed_b >> kPositionTypeTagBits;
 }
 
 
@@ -359,7 +377,7 @@ void RelocIterator::next() {
           if (SetMode(DebugInfoModeFromTag(top_tag))) return;
         } else {
           // Otherwise, just skip over the data.
-          Advance(kIntSize);
+          Advance(kIntptrSize);
         }
       } else {
         AdvanceReadPC();
@@ -476,7 +494,7 @@ void RelocInfo::Verify() {
       Address addr = target_address();
       ASSERT(addr != NULL);
       // Check that we can find the right code object.
-      HeapObject* code = HeapObject::FromAddress(addr - Code::kHeaderSize);
+      Code* code = Code::GetCodeFromTargetAddress(addr);
       Object* found = Heap::FindCodeObject(addr);
       ASSERT(found->IsCode());
       ASSERT(code->address() == HeapObject::cast(found)->address());
@@ -504,7 +522,7 @@ void RelocInfo::Verify() {
 // Implementation of ExternalReference
 
 ExternalReference::ExternalReference(Builtins::CFunctionId id)
-  : address_(Builtins::c_function_address(id)) {}
+  : address_(Redirect(Builtins::c_function_address(id))) {}
 
 
 ExternalReference::ExternalReference(Builtins::Name name)
@@ -512,15 +530,15 @@ ExternalReference::ExternalReference(Builtins::Name name)
 
 
 ExternalReference::ExternalReference(Runtime::FunctionId id)
-  : address_(Runtime::FunctionForId(id)->entry) {}
+  : address_(Redirect(Runtime::FunctionForId(id)->entry)) {}
 
 
 ExternalReference::ExternalReference(Runtime::Function* f)
-  : address_(f->entry) {}
+  : address_(Redirect(f->entry)) {}
 
 
 ExternalReference::ExternalReference(const IC_Utility& ic_utility)
-  : address_(ic_utility.address()) {}
+  : address_(Redirect(ic_utility.address())) {}
 
 #ifdef ENABLE_DEBUGGER_SUPPORT
 ExternalReference::ExternalReference(const Debug_Address& debug_address)
@@ -539,12 +557,28 @@ ExternalReference::ExternalReference(const SCTableReference& table_ref)
   : address_(table_ref.address()) {}
 
 
+ExternalReference ExternalReference::perform_gc_function() {
+  return ExternalReference(Redirect(FUNCTION_ADDR(Runtime::PerformGC)));
+}
+
+
 ExternalReference ExternalReference::builtin_passed_function() {
   return ExternalReference(&Builtins::builtin_passed_function);
 }
 
+
+ExternalReference ExternalReference::random_positive_smi_function() {
+  return ExternalReference(Redirect(FUNCTION_ADDR(V8::RandomPositiveSmi)));
+}
+
+
 ExternalReference ExternalReference::the_hole_value_location() {
   return ExternalReference(Factory::the_hole_value().location());
+}
+
+
+ExternalReference ExternalReference::roots_address() {
+  return ExternalReference(Heap::roots_address());
 }
 
 
@@ -577,6 +611,34 @@ ExternalReference ExternalReference::new_space_allocation_limit_address() {
   return ExternalReference(Heap::NewSpaceAllocationLimitAddress());
 }
 
+#ifdef V8_NATIVE_REGEXP
+
+ExternalReference ExternalReference::re_check_stack_guard_state() {
+  Address function;
+#ifdef V8_TARGET_ARCH_X64
+  function = FUNCTION_ADDR(RegExpMacroAssemblerX64::CheckStackGuardState);
+#elif V8_TARGET_ARCH_IA32
+  function = FUNCTION_ADDR(RegExpMacroAssemblerIA32::CheckStackGuardState);
+#elif V8_TARGET_ARCH_ARM
+  function = FUNCTION_ADDR(RegExpMacroAssemblerARM::CheckStackGuardState);
+#else
+  UNREACHABLE("Unexpected architecture");
+#endif
+  return ExternalReference(Redirect(function));
+}
+
+ExternalReference ExternalReference::re_grow_stack() {
+  return ExternalReference(
+      Redirect(FUNCTION_ADDR(NativeRegExpMacroAssembler::GrowStack)));
+}
+
+ExternalReference ExternalReference::re_case_insensitive_compare_uc16() {
+  return ExternalReference(Redirect(
+      FUNCTION_ADDR(NativeRegExpMacroAssembler::CaseInsensitiveCompareUC16)));
+}
+
+#endif
+
 
 static double add_two_doubles(double x, double y) {
   return x + y;
@@ -590,6 +652,22 @@ static double sub_two_doubles(double x, double y) {
 
 static double mul_two_doubles(double x, double y) {
   return x * y;
+}
+
+
+static double div_two_doubles(double x, double y) {
+  return x / y;
+}
+
+
+static double mod_two_doubles(double x, double y) {
+  return fmod(x, y);
+}
+
+
+static int native_compare_doubles(double x, double y) {
+  if (x == y) return 0;
+  return x < y ? 1 : -1;
 }
 
 
@@ -607,16 +685,32 @@ ExternalReference ExternalReference::double_fp_operation(
     case Token::MUL:
       function = &mul_two_doubles;
       break;
+    case Token::DIV:
+      function = &div_two_doubles;
+      break;
+    case Token::MOD:
+      function = &mod_two_doubles;
+      break;
     default:
       UNREACHABLE();
   }
-  return ExternalReference(FUNCTION_ADDR(function));
+  // Passing true as 2nd parameter indicates that they return an fp value.
+  return ExternalReference(Redirect(FUNCTION_ADDR(function), true));
 }
+
+
+ExternalReference ExternalReference::compare_doubles() {
+  return ExternalReference(Redirect(FUNCTION_ADDR(native_compare_doubles),
+                                    false));
+}
+
+
+ExternalReferenceRedirector* ExternalReference::redirector_ = NULL;
 
 
 #ifdef ENABLE_DEBUGGER_SUPPORT
 ExternalReference ExternalReference::debug_break() {
-  return ExternalReference(FUNCTION_ADDR(Debug::Break));
+  return ExternalReference(Redirect(FUNCTION_ADDR(Debug::Break)));
 }
 
 

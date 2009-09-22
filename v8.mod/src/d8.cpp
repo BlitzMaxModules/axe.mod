@@ -146,27 +146,26 @@ bool Shell::ExecuteString(Handle<String> source,
 
 
 Handle<Value> Shell::Print(const Arguments& args) {
-  bool first = true;
+  Handle<Value> val = Write(args);
+  printf("\n");
+  return val;
+}
+
+
+Handle<Value> Shell::Write(const Arguments& args) {
   for (int i = 0; i < args.Length(); i++) {
     HandleScope handle_scope;
-    if (first) {
-      first = false;
-    } else {
+    if (i != 0) {
       printf(" ");
     }
     v8::String::Utf8Value str(args[i]);
-    const char* cstr = ToCString(str);
-    printf("%s", cstr);
+    fwrite(*str, sizeof(**str), str.length(), stdout);
   }
-  printf("\n");
   return Undefined();
 }
 
 
 Handle<Value> Shell::Read(const Arguments& args) {
-  if (args.Length() != 1) {
-    return ThrowException(String::New("Bad parameters"));
-  }
   String::Utf8Value file(args[0]);
   if (*file == NULL) {
     return ThrowException(String::New("Error loading file"));
@@ -176,6 +175,19 @@ Handle<Value> Shell::Read(const Arguments& args) {
     return ThrowException(String::New("Error loading file"));
   }
   return source;
+}
+
+
+Handle<Value> Shell::ReadLine(const Arguments& args) {
+  i::SmartPointer<char> line(i::ReadLine(""));
+  if (*line == NULL) {
+    return Null();
+  }
+  size_t len = strlen(*line);
+  if (len > 0 && line[len - 1] == '\n') {
+    --len;
+  }
+  return String::New(*line, len);
 }
 
 
@@ -399,7 +411,10 @@ void Shell::Initialize() {
   HandleScope scope;
   Handle<ObjectTemplate> global_template = ObjectTemplate::New();
   global_template->Set(String::New("print"), FunctionTemplate::New(Print));
+  global_template->Set(String::New("write"), FunctionTemplate::New(Write));
   global_template->Set(String::New("read"), FunctionTemplate::New(Read));
+  global_template->Set(String::New("readline"),
+                       FunctionTemplate::New(ReadLine));
   global_template->Set(String::New("load"), FunctionTemplate::New(Load));
   global_template->Set(String::New("quit"), FunctionTemplate::New(Quit));
   global_template->Set(String::New("version"), FunctionTemplate::New(Version));
@@ -451,7 +466,7 @@ void Shell::Initialize() {
   i::Handle<i::JSFunction> script_fun = Utils::OpenHandle(*script);
   i::Handle<i::Script> script_object =
       i::Handle<i::Script>(i::Script::cast(script_fun->shared()->script()));
-  script_object->set_type(i::Smi::FromInt(i::SCRIPT_TYPE_NATIVE));
+  script_object->set_type(i::Smi::FromInt(i::Script::TYPE_NATIVE));
 
   // Create the evaluation context
   evaluation_context_ = Context::New(NULL, global_template);
@@ -460,6 +475,16 @@ void Shell::Initialize() {
 #ifdef ENABLE_DEBUGGER_SUPPORT
   // Set the security token of the debug context to allow access.
   i::Debug::debug_context()->set_security_token(i::Heap::undefined_value());
+
+  // Start the debugger agent if requested.
+  if (i::FLAG_debugger_agent) {
+    v8::Debug::EnableAgent("d8 shell", i::FLAG_debugger_port);
+  }
+
+  // Start the in-process debugger if requested.
+  if (i::FLAG_debugger && !i::FLAG_debugger_agent) {
+    v8::Debug::SetDebugEventListener(HandleDebugEvent);
+  }
 #endif
 }
 
@@ -578,8 +603,12 @@ void ShellThread::Run() {
   Handle<ObjectTemplate> global_template = ObjectTemplate::New();
   global_template->Set(String::New("print"),
                        FunctionTemplate::New(Shell::Print));
+  global_template->Set(String::New("write"),
+                       FunctionTemplate::New(Shell::Write));
   global_template->Set(String::New("read"),
                        FunctionTemplate::New(Shell::Read));
+  global_template->Set(String::New("readline"),
+                       FunctionTemplate::New(Shell::ReadLine));
   global_template->Set(String::New("load"),
                        FunctionTemplate::New(Shell::Load));
   global_template->Set(String::New("yield"),
@@ -721,16 +750,6 @@ int Shell::Main(int argc, char* argv[]) {
       RunRemoteDebugger(i::FLAG_debugger_port);
       return 0;
     }
-
-    // Start the debugger agent if requested.
-    if (i::FLAG_debugger_agent) {
-      v8::Debug::EnableAgent("d8 shell", i::FLAG_debugger_port);
-    }
-
-    // Start the in-process debugger if requested.
-    if (i::FLAG_debugger && !i::FLAG_debugger_agent) {
-      v8::Debug::SetDebugEventListener(HandleDebugEvent);
-    }
 #endif
   }
   if (run_shell)
@@ -746,3 +765,8 @@ int Shell::Main(int argc, char* argv[]) {
 
 
 }  // namespace v8
+
+
+int main(int argc, char* argv[]) {
+  return v8::Shell::Main(argc, argv);
+}

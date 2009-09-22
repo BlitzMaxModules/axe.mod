@@ -44,29 +44,6 @@ namespace v8 {
 namespace internal {
 
 // -----------------------------------------------------------------------------
-// Implementation of Register
-
-Register eax = { 0 };
-Register ecx = { 1 };
-Register edx = { 2 };
-Register ebx = { 3 };
-Register esp = { 4 };
-Register ebp = { 5 };
-Register esi = { 6 };
-Register edi = { 7 };
-Register no_reg = { -1 };
-
-XMMRegister xmm0 = { 0 };
-XMMRegister xmm1 = { 1 };
-XMMRegister xmm2 = { 2 };
-XMMRegister xmm3 = { 3 };
-XMMRegister xmm4 = { 4 };
-XMMRegister xmm5 = { 5 };
-XMMRegister xmm6 = { 6 };
-XMMRegister xmm7 = { 7 };
-
-
-// -----------------------------------------------------------------------------
 // Implementation of CpuFeatures
 
 // Safe default is no features.
@@ -137,10 +114,13 @@ void CpuFeatures::Probe() {
 
   CodeDesc desc;
   assm.GetCode(&desc);
-  Object* code =
-      Heap::CreateCode(desc, NULL, Code::ComputeFlags(Code::STUB), NULL);
+  Object* code = Heap::CreateCode(desc,
+                                  NULL,
+                                  Code::ComputeFlags(Code::STUB),
+                                  Handle<Code>::null());
   if (!code->IsCode()) return;
-  LOG(CodeCreateEvent("Builtin", Code::cast(code), "CpuFeatures::Probe"));
+  LOG(CodeCreateEvent(Logger::BUILTIN_TAG,
+                      Code::cast(code), "CpuFeatures::Probe"));
   typedef uint64_t (*F0)();
   F0 probe = FUNCTION_CAST<F0>(Code::cast(code)->entry());
   supported_ = probe();
@@ -177,6 +157,9 @@ void RelocInfo::PatchCode(byte* instructions, int instruction_count) {
   for (int i = 0; i < instruction_count; i++) {
     *(pc_ + i) = *(instructions + i);
   }
+
+  // Indicate that code has changed.
+  CPU::FlushICache(pc_, instruction_count);
 }
 
 
@@ -184,11 +167,24 @@ void RelocInfo::PatchCode(byte* instructions, int instruction_count) {
 // Additional guard int3 instructions can be added if required.
 void RelocInfo::PatchCodeWithCall(Address target, int guard_bytes) {
   // Call instruction takes up 5 bytes and int3 takes up one byte.
-  int code_size = 5 + guard_bytes;
+  static const int kCallCodeSize = 5;
+  int code_size = kCallCodeSize + guard_bytes;
+
+  // Create a code patcher.
+  CodePatcher patcher(pc_, code_size);
+
+  // Add a label for checking the size of the code used for returning.
+#ifdef DEBUG
+  Label check_codesize;
+  patcher.masm()->bind(&check_codesize);
+#endif
 
   // Patch the code.
-  CodePatcher patcher(pc_, code_size);
   patcher.masm()->call(target, RelocInfo::NONE);
+
+  // Check that the size of the code generated is as expected.
+  ASSERT_EQ(kCallCodeSize,
+            patcher.masm()->SizeOfCodeGeneratedSince(&check_codesize));
 
   // Add the requested number of int3 instructions after the call.
   for (int i = 0; i < guard_bytes; i++) {
@@ -741,10 +737,10 @@ void Assembler::cmov(Condition cc, Register dst, const Operand& src) {
   ASSERT(CpuFeatures::IsEnabled(CpuFeatures::CMOV));
   EnsureSpace ensure_space(this);
   last_pc_ = pc_;
-  UNIMPLEMENTED();
-  USE(cc);
-  USE(dst);
-  USE(src);
+  // Opcode: 0f 40 + cc /r
+  EMIT(0x0F);
+  EMIT(0x40 + cc);
+  emit_operand(dst, src);
 }
 
 
@@ -886,6 +882,13 @@ void Assembler::cmp(const Operand& op, const Immediate& imm) {
 }
 
 
+void Assembler::cmp(const Operand& op, Handle<Object> handle) {
+  EnsureSpace ensure_space(this);
+  last_pc_ = pc_;
+  emit_arith(7, op, Immediate(handle));
+}
+
+
 void Assembler::cmpb_al(const Operand& op) {
   EnsureSpace ensure_space(this);
   last_pc_ = pc_;
@@ -938,6 +941,14 @@ void Assembler::idiv(Register src) {
   last_pc_ = pc_;
   EMIT(0xF7);
   EMIT(0xF8 | src.code());
+}
+
+
+void Assembler::imul(Register reg) {
+  EnsureSpace ensure_space(this);
+  last_pc_ = pc_;
+  EMIT(0xF7);
+  EMIT(0xE8 | reg.code());
 }
 
 
@@ -1439,7 +1450,7 @@ void Assembler::call(const Operand& adr) {
 }
 
 
-void Assembler::call(Handle<Code> code,  RelocInfo::Mode rmode) {
+void Assembler::call(Handle<Code> code, RelocInfo::Mode rmode) {
   WriteRecordedPositions();
   EnsureSpace ensure_space(this);
   last_pc_ = pc_;
@@ -1678,6 +1689,22 @@ void Assembler::fchs() {
 }
 
 
+void Assembler::fcos() {
+  EnsureSpace ensure_space(this);
+  last_pc_ = pc_;
+  EMIT(0xD9);
+  EMIT(0xFF);
+}
+
+
+void Assembler::fsin() {
+  EnsureSpace ensure_space(this);
+  last_pc_ = pc_;
+  EMIT(0xD9);
+  EMIT(0xFE);
+}
+
+
 void Assembler::fadd(int i) {
   EnsureSpace ensure_space(this);
   last_pc_ = pc_;
@@ -1821,7 +1848,7 @@ void Assembler::fcompp() {
 void Assembler::fnstsw_ax() {
   EnsureSpace ensure_space(this);
   last_pc_ = pc_;
-  EMIT(0xdF);
+  EMIT(0xDF);
   EMIT(0xE0);
 }
 
@@ -1939,6 +1966,17 @@ void Assembler::divsd(XMMRegister dst, XMMRegister src) {
   EMIT(0xF2);
   EMIT(0x0F);
   EMIT(0x5E);
+  emit_sse_operand(dst, src);
+}
+
+
+void Assembler::comisd(XMMRegister dst, XMMRegister src) {
+  ASSERT(CpuFeatures::IsEnabled(CpuFeatures::SSE2));
+  EnsureSpace ensure_space(this);
+  last_pc_ = pc_;
+  EMIT(0x66);
+  EMIT(0x0F);
+  EMIT(0x2F);
   emit_sse_operand(dst, src);
 }
 
@@ -2185,17 +2223,6 @@ void Assembler::RecordRelocInfo(RelocInfo::Mode rmode, intptr_t data) {
   }
   RelocInfo rinfo(pc_, rmode, data);
   reloc_info_writer.Write(&rinfo);
-}
-
-
-void Assembler::WriteInternalReference(int position, const Label& bound_label) {
-  ASSERT(bound_label.is_bound());
-  ASSERT(0 <= position);
-  ASSERT(position + static_cast<int>(sizeof(uint32_t)) <= pc_offset());
-  ASSERT(long_at(position) == 0);  // only initialize once!
-
-  uint32_t label_loc = reinterpret_cast<uint32_t>(addr_at(bound_label.pos()));
-  long_at_put(position, label_loc);
 }
 
 

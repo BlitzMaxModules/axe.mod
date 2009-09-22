@@ -32,6 +32,8 @@ Import "src/platform-win32.cpp"
 
 Import "src/dtoa-config.c"
 
+Import "src/ia32/cfg-ia32.cpp"
+
 Import "src/ia32/assembler-ia32.cpp"
 Import "src/ia32/builtins-ia32.cpp"
 Import "src/ia32/codegen-ia32.cpp"
@@ -48,9 +50,16 @@ Import "src/ia32/simulator-ia32.cpp"
 Import "src/ia32/stub-cache-ia32.cpp"
 Import "src/ia32/virtual-frame-ia32.cpp"
 
+
+Import "src/cfg.cpp"
+Import "src/log-utils.cpp"
+Import "src/frame-element.cpp"
+
 Import "src/accessors.cpp"
 Import "src/allocation.cpp"
+
 Import "src/api.cpp"
+
 Import "src/assembler.cpp"
 Import "src/ast.cpp"
 Import "src/bootstrapper.cpp"

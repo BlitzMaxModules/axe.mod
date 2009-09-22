@@ -43,6 +43,10 @@ namespace internal {
 
 
 // Helper function used to load a property from a dictionary backing storage.
+// This function may return false negatives, so miss_label
+// must always call a backup property load that is complete.
+// This function is safe to call if the receiver has fast properties,
+// or if name is not a symbol, and will jump to the miss_label in that case.
 static void GenerateDictionaryLoad(MacroAssembler* masm, Label* miss_label,
                                    Register r0, Register r1, Register r2,
                                    Register name) {
@@ -56,7 +60,7 @@ static void GenerateDictionaryLoad(MacroAssembler* masm, Label* miss_label,
   //
   // r2   - used to hold the capacity of the property dictionary.
   //
-  // name - holds the name of the property and is unchanges.
+  // name - holds the name of the property and is unchanged.
 
   Label done;
 
@@ -66,8 +70,20 @@ static void GenerateDictionaryLoad(MacroAssembler* masm, Label* miss_label,
   // Test the has_named_interceptor bit in the map.
   __ test(FieldOperand(r0, Map::kInstanceAttributesOffset),
           Immediate(1 << (Map::kHasNamedInterceptor + (3 * 8))));
+
   // Jump to miss if the interceptor bit is set.
   __ j(not_zero, miss_label, not_taken);
+
+  // Bail out if we have a JS global proxy object.
+  __ movzx_b(r0, FieldOperand(r0, Map::kInstanceTypeOffset));
+  __ cmp(r0, JS_GLOBAL_PROXY_TYPE);
+  __ j(equal, miss_label, not_taken);
+
+  // Possible work-around for http://crbug.com/16276.
+  __ cmp(r0, JS_GLOBAL_OBJECT_TYPE);
+  __ j(equal, miss_label, not_taken);
+  __ cmp(r0, JS_BUILTINS_OBJECT_TYPE);
+  __ j(equal, miss_label, not_taken);
 
   // Check that the properties array is a dictionary.
   __ mov(r0, FieldOperand(r1, JSObject::kPropertiesOffset));
@@ -77,7 +93,8 @@ static void GenerateDictionaryLoad(MacroAssembler* masm, Label* miss_label,
 
   // Compute the capacity mask.
   const int kCapacityOffset =
-      Array::kHeaderSize + Dictionary::kCapacityIndex * kPointerSize;
+      StringDictionary::kHeaderSize +
+      StringDictionary::kCapacityIndex * kPointerSize;
   __ mov(r2, FieldOperand(r0, kCapacityOffset));
   __ shr(r2, kSmiTagSize);  // convert smi to int
   __ dec(r2);
@@ -87,18 +104,19 @@ static void GenerateDictionaryLoad(MacroAssembler* masm, Label* miss_label,
   // cover ~93% of loads from dictionaries.
   static const int kProbes = 4;
   const int kElementsStartOffset =
-      Array::kHeaderSize + Dictionary::kElementsStartIndex * kPointerSize;
+      StringDictionary::kHeaderSize +
+      StringDictionary::kElementsStartIndex * kPointerSize;
   for (int i = 0; i < kProbes; i++) {
     // Compute the masked index: (hash + i + i * i) & mask.
     __ mov(r1, FieldOperand(name, String::kLengthOffset));
     __ shr(r1, String::kHashShift);
     if (i > 0) {
-      __ add(Operand(r1), Immediate(Dictionary::GetProbeOffset(i)));
+      __ add(Operand(r1), Immediate(StringDictionary::GetProbeOffset(i)));
     }
     __ and_(r1, Operand(r2));
 
-    // Scale the index by multiplying by the element size.
-    ASSERT(Dictionary::kElementSize == 3);
+    // Scale the index by multiplying by the entry size.
+    ASSERT(StringDictionary::kEntrySize == 3);
     __ lea(r1, Operand(r1, r1, times_2, 0));  // r1 = r1 * 3
 
     // Check if the key is identical to the name.
@@ -139,6 +157,12 @@ static void GenerateCheckNonObjectOrLoaded(MacroAssembler* masm, Label* miss,
   __ j(not_zero, miss, not_taken);
   __ bind(&done);
 }
+
+
+// The offset from the inlined patch site to the start of the
+// inlined load instruction.  It is 7 bytes (test eax, imm) plus
+// 6 bytes (jne slow_label).
+const int LoadIC::kOffsetToLoadInstruction = 13;
 
 
 void LoadIC::GenerateArrayLength(MacroAssembler* masm) {
@@ -210,11 +234,11 @@ void KeyedLoadIC::GenerateGeneric(MacroAssembler* masm) {
   //  -- esp[4] : name
   //  -- esp[8] : receiver
   // -----------------------------------
-  Label slow, fast, check_string, index_int, index_string;
+  Label slow, check_string, index_int, index_string, check_pixel_array;
 
   // Load name and receiver.
-  __ mov(eax, (Operand(esp, kPointerSize)));
-  __ mov(ecx, (Operand(esp, 2 * kPointerSize)));
+  __ mov(eax, Operand(esp, kPointerSize));
+  __ mov(ecx, Operand(esp, 2 * kPointerSize));
 
   // Check that the object isn't a smi.
   __ test(ecx, Immediate(kSmiTagMask));
@@ -245,24 +269,56 @@ void KeyedLoadIC::GenerateGeneric(MacroAssembler* masm) {
   __ mov(ecx, FieldOperand(ecx, JSObject::kElementsOffset));
   // Check that the object is in fast mode (not dictionary).
   __ cmp(FieldOperand(ecx, HeapObject::kMapOffset),
-         Immediate(Factory::hash_table_map()));
-  __ j(equal, &slow, not_taken);
+         Immediate(Factory::fixed_array_map()));
+  __ j(not_equal, &check_pixel_array);
   // Check that the key (index) is within bounds.
-  __ cmp(eax, FieldOperand(ecx, Array::kLengthOffset));
-  __ j(below, &fast, taken);
+  __ cmp(eax, FieldOperand(ecx, FixedArray::kLengthOffset));
+  __ j(above_equal, &slow);
+  // Fast case: Do the load.
+  __ mov(eax,
+         Operand(ecx, eax, times_4, FixedArray::kHeaderSize - kHeapObjectTag));
+  __ cmp(Operand(eax), Immediate(Factory::the_hole_value()));
+  // In case the loaded value is the_hole we have to consult GetProperty
+  // to ensure the prototype chain is searched.
+  __ j(equal, &slow);
+  __ IncrementCounter(&Counters::keyed_load_generic_smi, 1);
+  __ ret(0);
+
+  // Check whether the elements is a pixel array.
+  // eax: untagged index
+  // ecx: elements array
+  __ bind(&check_pixel_array);
+  __ cmp(FieldOperand(ecx, HeapObject::kMapOffset),
+         Immediate(Factory::pixel_array_map()));
+  __ j(not_equal, &slow);
+  __ cmp(eax, FieldOperand(ecx, PixelArray::kLengthOffset));
+  __ j(above_equal, &slow);
+  __ mov(ecx, FieldOperand(ecx, PixelArray::kExternalPointerOffset));
+  __ movzx_b(eax, Operand(ecx, eax, times_1, 0));
+  __ shl(eax, kSmiTagSize);
+  __ ret(0);
+
+
   // Slow case: Load name and receiver from stack and jump to runtime.
   __ bind(&slow);
   __ IncrementCounter(&Counters::keyed_load_generic_slow, 1);
   KeyedLoadIC::Generate(masm, ExternalReference(Runtime::kKeyedGetProperty));
-  // Check if the key is a symbol that is not an array index.
+
   __ bind(&check_string);
+  // The key is not a smi.
+  // Is it a string?
+  __ CmpObjectType(eax, FIRST_NONSTRING_TYPE, edx);
+  __ j(above_equal, &slow);
+  // Is the string an array index, with cached numeric value?
   __ mov(ebx, FieldOperand(eax, String::kLengthOffset));
   __ test(ebx, Immediate(String::kIsArrayIndexMask));
   __ j(not_zero, &index_string, not_taken);
-  __ mov(ebx, FieldOperand(eax, HeapObject::kMapOffset));
-  __ movzx_b(ebx, FieldOperand(ebx, Map::kInstanceTypeOffset));
+
+  // If the string is a symbol, do a quick inline probe of the receiver's
+  // dictionary, if it exists.
+  __ movzx_b(ebx, FieldOperand(edx, Map::kInstanceTypeOffset));
   __ test(ebx, Immediate(kIsSymbolMask));
-  __ j(not_zero, &slow, not_taken);
+  __ j(zero, &slow, not_taken);
   // Probe the dictionary leaving result in ecx.
   GenerateDictionaryLoad(masm, &slow, ebx, ecx, edx, eax);
   GenerateCheckNonObjectOrLoaded(masm, &slow, ecx, edx);
@@ -284,15 +340,6 @@ void KeyedLoadIC::GenerateGeneric(MacroAssembler* masm) {
   __ and_(eax, (1 << String::kShortLengthShift) - 1);
   __ shr(eax, String::kLongLengthShift);
   __ jmp(&index_int);
-  // Fast case: Do the load.
-  __ bind(&fast);
-  __ mov(eax, Operand(ecx, eax, times_4, Array::kHeaderSize - kHeapObjectTag));
-  __ cmp(Operand(eax), Immediate(Factory::the_hole_value()));
-  // In case the loaded value is the_hole we have to consult GetProperty
-  // to ensure the prototype chain is searched.
-  __ j(equal, &slow, not_taken);
-  __ IncrementCounter(&Counters::keyed_load_generic_smi, 1);
-  __ ret(0);
 }
 
 
@@ -303,7 +350,7 @@ void KeyedStoreIC::GenerateGeneric(MacroAssembler* masm) {
   //  -- esp[4] : key
   //  -- esp[8] : receiver
   // -----------------------------------
-  Label slow, fast, array, extra;
+  Label slow, fast, array, extra, check_pixel_array;
 
   // Get the receiver from the stack.
   __ mov(edx, Operand(esp, 2 * kPointerSize));  // 2 ~ return address, key
@@ -338,8 +385,8 @@ void KeyedStoreIC::GenerateGeneric(MacroAssembler* masm) {
   __ mov(ecx, FieldOperand(edx, JSObject::kElementsOffset));
   // Check that the object is in fast mode (not dictionary).
   __ cmp(FieldOperand(ecx, HeapObject::kMapOffset),
-         Immediate(Factory::hash_table_map()));
-  __ j(equal, &slow, not_taken);
+         Immediate(Factory::fixed_array_map()));
+  __ j(not_equal, &check_pixel_array, not_taken);
   // Untag the key (for checking against untagged length in the fixed array).
   __ mov(edx, Operand(ebx));
   __ sar(edx, kSmiTagSize);  // untag the index and use it for the comparison
@@ -349,7 +396,6 @@ void KeyedStoreIC::GenerateGeneric(MacroAssembler* masm) {
   // ebx: index (as a smi)
   __ j(below, &fast, taken);
 
-
   // Slow case: Push extra copies of the arguments (3).
   __ bind(&slow);
   __ pop(ecx);
@@ -358,8 +404,39 @@ void KeyedStoreIC::GenerateGeneric(MacroAssembler* masm) {
   __ push(eax);
   __ push(ecx);
   // Do tail-call to runtime routine.
-  __ TailCallRuntime(ExternalReference(Runtime::kSetProperty), 3);
+  __ TailCallRuntime(ExternalReference(Runtime::kSetProperty), 3, 1);
 
+  // Check whether the elements is a pixel array.
+  // eax: value
+  // ecx: elements array
+  // ebx: index (as a smi)
+  __ bind(&check_pixel_array);
+  __ cmp(FieldOperand(ecx, HeapObject::kMapOffset),
+         Immediate(Factory::pixel_array_map()));
+  __ j(not_equal, &slow);
+  // Check that the value is a smi. If a conversion is needed call into the
+  // runtime to convert and clamp.
+  __ test(eax, Immediate(kSmiTagMask));
+  __ j(not_zero, &slow);
+  __ sar(ebx, kSmiTagSize);  // Untag the index.
+  __ cmp(ebx, FieldOperand(ecx, PixelArray::kLengthOffset));
+  __ j(above_equal, &slow);
+  __ sar(eax, kSmiTagSize);  // Untag the value.
+  {  // Clamp the value to [0..255].
+    Label done, check_255;
+    __ cmp(eax, 0);
+    __ j(greater_equal, &check_255);
+    __ mov(eax, Immediate(0));
+    __ jmp(&done);
+    __ bind(&check_255);
+    __ cmp(eax, 255);
+    __ j(less_equal, &done);
+    __ mov(eax, Immediate(255));
+    __ bind(&done);
+  }
+  __ mov(ecx, FieldOperand(ecx, PixelArray::kExternalPointerOffset));
+  __ mov_b(Operand(ecx, ebx, times_1, 0), eax);
+  __ ret(0);
 
   // Extra capacity case: Check if there is extra capacity to
   // perform the store and update the length. Used for adding one
@@ -390,21 +467,21 @@ void KeyedStoreIC::GenerateGeneric(MacroAssembler* masm) {
   // ebx: index (as a smi)
   __ mov(ecx, FieldOperand(edx, JSObject::kElementsOffset));
   __ cmp(FieldOperand(ecx, HeapObject::kMapOffset),
-         Immediate(Factory::hash_table_map()));
-  __ j(equal, &slow, not_taken);
+         Immediate(Factory::fixed_array_map()));
+  __ j(not_equal, &check_pixel_array);
 
   // Check the key against the length in the array, compute the
   // address to store into and fall through to fast case.
   __ cmp(ebx, FieldOperand(edx, JSArray::kLengthOffset));
   __ j(above_equal, &extra, not_taken);
 
-
   // Fast case: Do the store.
   __ bind(&fast);
   // eax: value
   // ecx: FixedArray
   // ebx: index (as a smi)
-  __ mov(Operand(ecx, ebx, times_2, Array::kHeaderSize - kHeapObjectTag), eax);
+  __ mov(Operand(ecx, ebx, times_2, FixedArray::kHeaderSize - kHeapObjectTag),
+         eax);
   // Update write barrier for the elements array address.
   __ mov(edx, Operand(eax));
   __ RecordWrite(ecx, 0, edx, ebx);
@@ -428,7 +505,7 @@ void CallIC::GenerateMegamorphic(MacroAssembler* masm, int argc) {
   // Probe the stub cache.
   Code::Flags flags =
       Code::ComputeFlags(Code::CALL_IC, NOT_IN_LOOP, MONOMORPHIC, NORMAL, argc);
-  StubCache::GenerateProbe(masm, flags, edx, ecx, ebx);
+  StubCache::GenerateProbe(masm, flags, edx, ecx, ebx, eax);
 
   // If the stub cache probing failed, the receiver might be a value.
   // For value objects, we use the map of the prototype objects for
@@ -465,7 +542,7 @@ void CallIC::GenerateMegamorphic(MacroAssembler* masm, int argc) {
 
   // Probe the stub cache for the value object.
   __ bind(&probe);
-  StubCache::GenerateProbe(masm, flags, edx, ecx, ebx);
+  StubCache::GenerateProbe(masm, flags, edx, ecx, ebx, no_reg);
 
   // Cache miss: Jump to runtime.
   __ bind(&miss);
@@ -527,7 +604,7 @@ void CallIC::GenerateNormal(MacroAssembler* masm, int argc) {
   __ mov(ebx, FieldOperand(edx, HeapObject::kMapOffset));
   __ movzx_b(eax, FieldOperand(ebx, Map::kInstanceTypeOffset));
   __ cmp(eax, FIRST_JS_OBJECT_TYPE);
-  __ j(less, &miss, not_taken);
+  __ j(below, &miss, not_taken);
 
   // If this assert fails, we have to check upper bound too.
   ASSERT(LAST_TYPE == JS_FUNCTION_TYPE);
@@ -590,7 +667,7 @@ void CallIC::Generate(MacroAssembler* masm,
   __ push(ebx);
 
   // Call the entry.
-  CEntryStub stub;
+  CEntryStub stub(1);
   __ mov(eax, Immediate(2));
   __ mov(ebx, Immediate(f));
   __ CallStub(&stub);
@@ -639,7 +716,7 @@ void LoadIC::GenerateMegamorphic(MacroAssembler* masm) {
   Code::Flags flags = Code::ComputeFlags(Code::LOAD_IC,
                                          NOT_IN_LOOP,
                                          MONOMORPHIC);
-  StubCache::GenerateProbe(masm, flags, eax, ecx, ebx);
+  StubCache::GenerateProbe(masm, flags, eax, ecx, ebx, edx);
 
   // Cache miss: Jump to runtime.
   Generate(masm, ExternalReference(IC_Utility(kLoadIC_Miss)));
@@ -716,15 +793,13 @@ void LoadIC::Generate(MacroAssembler* masm, const ExternalReference& f) {
   // -----------------------------------
 
   __ mov(eax, Operand(esp, kPointerSize));
-
-  // Move the return address below the arguments.
   __ pop(ebx);
-  __ push(eax);
-  __ push(ecx);
-  __ push(ebx);
+  __ push(eax);  // receiver
+  __ push(ecx);  // name
+  __ push(ebx);  // return address
 
   // Perform tail call to the entry.
-  __ TailCallRuntime(f, 2);
+  __ TailCallRuntime(f, 2, 1);
 }
 
 
@@ -747,9 +822,25 @@ void KeyedLoadIC::ClearInlinedVersion(Address address) {
 }
 
 
+void KeyedStoreIC::ClearInlinedVersion(Address address) {
+  // Insert null as the elements map to check for.  This will make
+  // sure that the elements fast-case map check fails so that control
+  // flows to the IC instead of the inlined version.
+  PatchInlinedStore(address, Heap::null_value());
+}
+
+
+void KeyedStoreIC::RestoreInlinedVersion(Address address) {
+  // Restore the fast-case elements map check so that the inlined
+  // version can be used again.
+  PatchInlinedStore(address, Heap::fixed_array_map());
+}
+
+
 bool LoadIC::PatchInlinedLoad(Address address, Object* map, int offset) {
   // The address of the instruction following the call.
-  Address test_instruction_address = address + 4;
+  Address test_instruction_address =
+      address + Assembler::kCallTargetAddressOffset;
   // If the instruction following the call is not a test eax, nothing
   // was inlined.
   if (*test_instruction_address != kTestEaxByte) return false;
@@ -774,8 +865,9 @@ bool LoadIC::PatchInlinedLoad(Address address, Object* map, int offset) {
 }
 
 
-bool KeyedLoadIC::PatchInlinedLoad(Address address, Object* map) {
-  Address test_instruction_address = address + 4;  // 4 = stub address
+static bool PatchInlinedMapCheck(Address address, Object* map) {
+  Address test_instruction_address =
+      address + Assembler::kCallTargetAddressOffset;
   // The keyed load has a fast inlined case if the IC call instruction
   // is immediately followed by a test instruction.
   if (*test_instruction_address != kTestEaxByte) return false;
@@ -792,6 +884,16 @@ bool KeyedLoadIC::PatchInlinedLoad(Address address, Object* map) {
   // Patch the map check.
   *(reinterpret_cast<Object**>(map_address)) = map;
   return true;
+}
+
+
+bool KeyedLoadIC::PatchInlinedLoad(Address address, Object* map) {
+  return PatchInlinedMapCheck(address, map);
+}
+
+
+bool KeyedStoreIC::PatchInlinedStore(Address address, Object* map) {
+  return PatchInlinedMapCheck(address, map);
 }
 
 
@@ -819,15 +921,13 @@ void KeyedLoadIC::Generate(MacroAssembler* masm, const ExternalReference& f) {
 
   __ mov(eax, Operand(esp, kPointerSize));
   __ mov(ecx, Operand(esp, 2 * kPointerSize));
-
-  // Move the return address below the arguments.
   __ pop(ebx);
-  __ push(ecx);
-  __ push(eax);
-  __ push(ebx);
+  __ push(ecx);  // receiver
+  __ push(eax);  // name
+  __ push(ebx);  // return address
 
   // Perform tail call to the entry.
-  __ TailCallRuntime(f, 2);
+  __ TailCallRuntime(f, 2, 1);
 }
 
 
@@ -844,7 +944,7 @@ void StoreIC::GenerateMegamorphic(MacroAssembler* masm) {
   Code::Flags flags = Code::ComputeFlags(Code::STORE_IC,
                                          NOT_IN_LOOP,
                                          MONOMORPHIC);
-  StubCache::GenerateProbe(masm, flags, edx, ecx, ebx);
+  StubCache::GenerateProbe(masm, flags, edx, ecx, ebx, no_reg);
 
   // Cache miss: Jump to runtime.
   Generate(masm, ExternalReference(IC_Utility(kStoreIC_Miss)));
@@ -859,15 +959,15 @@ void StoreIC::GenerateExtendStorage(MacroAssembler* masm) {
   //  -- esp[4] : receiver
   // -----------------------------------
 
-  // Move the return address below the arguments.
   __ pop(ebx);
-  __ push(Operand(esp, 0));
-  __ push(ecx);
-  __ push(eax);
-  __ push(ebx);
+  __ push(Operand(esp, 0));  // receiver
+  __ push(ecx);  // transition map
+  __ push(eax);  // value
+  __ push(ebx);  // return address
+
   // Perform tail call to the entry.
   __ TailCallRuntime(
-      ExternalReference(IC_Utility(kSharedStoreIC_ExtendStorage)), 3);
+      ExternalReference(IC_Utility(kSharedStoreIC_ExtendStorage)), 3, 1);
 }
 
 
@@ -887,7 +987,7 @@ void StoreIC::Generate(MacroAssembler* masm, const ExternalReference& f) {
   __ push(ebx);
 
   // Perform tail call to the entry.
-  __ TailCallRuntime(f, 3);
+  __ TailCallRuntime(f, 3, 1);
 }
 
 
@@ -910,7 +1010,7 @@ void KeyedStoreIC::Generate(MacroAssembler* masm, const ExternalReference& f) {
   __ push(ecx);
 
   // Do tail-call to runtime routine.
-  __ TailCallRuntime(f, 3);
+  __ TailCallRuntime(f, 3, 1);
 }
 
 
@@ -932,7 +1032,7 @@ void KeyedStoreIC::GenerateExtendStorage(MacroAssembler* masm) {
 
   // Do tail-call to runtime routine.
   __ TailCallRuntime(
-      ExternalReference(IC_Utility(kSharedStoreIC_ExtendStorage)), 3);
+      ExternalReference(IC_Utility(kSharedStoreIC_ExtendStorage)), 3, 1);
 }
 
 #undef __

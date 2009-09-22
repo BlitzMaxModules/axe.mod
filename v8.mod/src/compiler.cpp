@@ -28,6 +28,7 @@
 #include "v8.h"
 
 #include "bootstrapper.h"
+#include "cfg.h"
 #include "codegen-inl.h"
 #include "compilation-cache.h"
 #include "compiler.h"
@@ -78,6 +79,22 @@ static Handle<Code> MakeCode(FunctionLiteral* literal,
     return Handle<Code>::null();
   }
 
+  if (FLAG_multipass) {
+    CfgGlobals scope(literal);
+    Cfg* cfg = Cfg::Build();
+#ifdef DEBUG
+    if (FLAG_print_cfg && cfg != NULL) {
+      SmartPointer<char> name = literal->name()->ToCString();
+      PrintF("Function \"%s\":\n", *name);
+      cfg->Print();
+      PrintF("\n");
+    }
+#endif
+    if (cfg != NULL) {
+      return cfg->Compile(script);
+    }
+  }
+
   // Generate code and return it.
   Handle<Code> result = CodeGenerator::MakeCode(literal, script, is_eval);
   return result;
@@ -85,7 +102,7 @@ static Handle<Code> MakeCode(FunctionLiteral* literal,
 
 
 static bool IsValidJSON(FunctionLiteral* lit) {
-  if (!lit->body()->length() == 1)
+  if (lit->body()->length() != 1)
     return false;
   Statement* stmt = lit->body()->at(0);
   if (stmt->AsExpressionStatement() == NULL)
@@ -97,7 +114,7 @@ static bool IsValidJSON(FunctionLiteral* lit) {
 
 static Handle<JSFunction> MakeFunction(bool is_global,
                                        bool is_eval,
-                                       bool is_json,
+                                       Compiler::ValidationState validate,
                                        Handle<Script> script,
                                        Handle<Context> context,
                                        v8::Extension* extension,
@@ -110,7 +127,23 @@ static Handle<JSFunction> MakeFunction(bool is_global,
 
   ASSERT(!i::Top::global_context().is_null());
   script->set_context_data((*i::Top::global_context())->data());
+
 #ifdef ENABLE_DEBUGGER_SUPPORT
+  bool is_json = (validate == Compiler::VALIDATE_JSON);
+  if (is_eval || is_json) {
+    script->set_compilation_type(
+        is_json ? Smi::FromInt(Script::COMPILATION_TYPE_JSON) :
+                               Smi::FromInt(Script::COMPILATION_TYPE_EVAL));
+    // For eval scripts add information on the function from which eval was
+    // called.
+    if (is_eval) {
+      JavaScriptFrameIterator it;
+      script->set_eval_from_function(it.frame()->function());
+      int offset = it.frame()->pc() - it.frame()->code()->instruction_start();
+      script->set_eval_from_instructions_offset(Smi::FromInt(offset));
+    }
+  }
+
   // Notify debugger
   Debugger::OnBeforeCompile(script);
 #endif
@@ -130,7 +163,7 @@ static Handle<JSFunction> MakeFunction(bool is_global,
   // When parsing JSON we do an ordinary parse and then afterwards
   // check the AST to ensure it was well-formed.  If not we give a
   // syntax error.
-  if (is_json && !IsValidJSON(lit)) {
+  if (validate == Compiler::VALIDATE_JSON && !IsValidJSON(lit)) {
     HandleScope scope;
     Handle<JSArray> args = Factory::NewJSArray(1);
     Handle<Object> source(script->source());
@@ -160,17 +193,21 @@ static Handle<JSFunction> MakeFunction(bool is_global,
 #if defined ENABLE_LOGGING_AND_PROFILING || defined ENABLE_OPROFILE_AGENT
   // Log the code generation for the script. Check explicit whether logging is
   // to avoid allocating when not required.
-  if (Logger::IsEnabled() || OProfileAgent::is_enabled()) {
+  if (Logger::is_logging() || OProfileAgent::is_enabled()) {
     if (script->name()->IsString()) {
       SmartPointer<char> data =
           String::cast(script->name())->ToCString(DISALLOW_NULLS);
-      LOG(CodeCreateEvent(is_eval ? "Eval" : "Script", *code, *data));
-      OProfileAgent::CreateNativeCodeRegion(*data, code->address(),
-                                            code->ExecutableSize());
+      LOG(CodeCreateEvent(is_eval ? Logger::EVAL_TAG : Logger::SCRIPT_TAG,
+                          *code, *data));
+      OProfileAgent::CreateNativeCodeRegion(*data,
+                                            code->instruction_start(),
+                                            code->instruction_size());
     } else {
-      LOG(CodeCreateEvent(is_eval ? "Eval" : "Script", *code, ""));
+      LOG(CodeCreateEvent(is_eval ? Logger::EVAL_TAG : Logger::SCRIPT_TAG,
+                          *code, ""));
       OProfileAgent::CreateNativeCodeRegion(is_eval ? "Eval" : "Script",
-          code->address(), code->ExecutableSize());
+                                            code->instruction_start(),
+                                            code->instruction_size());
     }
   }
 #endif
@@ -182,11 +219,8 @@ static Handle<JSFunction> MakeFunction(bool is_global,
                                       lit->contains_array_literal(),
                                       code);
 
-  CodeGenerator::SetFunctionInfo(fun, lit->scope()->num_parameters(),
-                                 RelocInfo::kNoPosition,
-                                 lit->start_position(), lit->end_position(),
-                                 lit->is_expression(), true, script,
-                                 lit->inferred_name());
+  ASSERT_EQ(RelocInfo::kNoPosition, lit->function_token_position());
+  CodeGenerator::SetFunctionInfo(fun, lit, true, script);
 
   // Hint to the runtime system used when allocating space for initial
   // property space by setting the expected number of properties for
@@ -232,7 +266,7 @@ Handle<JSFunction> Compiler::Compile(Handle<String> source,
     if (pre_data == NULL && source_length >= FLAG_min_preparse_length) {
       Access<SafeStringInputBuffer> buf(&safe_string_input_buffer);
       buf->Reset(source.location());
-      pre_data = PreParse(buf.value(), extension);
+      pre_data = PreParse(source, buf.value(), extension);
     }
 
     // Create a script object describing the script to be compiled.
@@ -246,7 +280,7 @@ Handle<JSFunction> Compiler::Compile(Handle<String> source,
     // Compile the function and add it to the cache.
     result = MakeFunction(true,
                           false,
-                          false,
+                          DONT_VALIDATE_JSON,
                           script,
                           Handle<Context>::null(),
                           extension,
@@ -269,33 +303,40 @@ Handle<JSFunction> Compiler::Compile(Handle<String> source,
 Handle<JSFunction> Compiler::CompileEval(Handle<String> source,
                                          Handle<Context> context,
                                          bool is_global,
-                                         bool is_json) {
+                                         ValidationState validate) {
+  // Note that if validation is required then no path through this
+  // function is allowed to return a value without validating that
+  // the input is legal json.
+
   int source_length = source->length();
   Counters::total_eval_size.Increment(source_length);
   Counters::total_compile_size.Increment(source_length);
 
   // The VM is in the COMPILER state until exiting this function.
   VMState state(COMPILER);
-  CompilationCache::Entry entry = is_global
-      ? CompilationCache::EVAL_GLOBAL
-      : CompilationCache::EVAL_CONTEXTUAL;
 
   // Do a lookup in the compilation cache; if the entry is not there,
-  // invoke the compiler and add the result to the cache.
-  Handle<JSFunction> result =
-      CompilationCache::LookupEval(source, context, entry);
+  // invoke the compiler and add the result to the cache.  If we're
+  // evaluating json we bypass the cache since we can't be sure a
+  // potential value in the cache has been validated.
+  Handle<JSFunction> result;
+  if (validate == DONT_VALIDATE_JSON)
+    result = CompilationCache::LookupEval(source, context, is_global);
+
   if (result.is_null()) {
     // Create a script object describing the script to be compiled.
     Handle<Script> script = Factory::NewScript(source);
     result = MakeFunction(is_global,
                           true,
-                          is_json,
+                          validate,
                           script,
                           context,
                           NULL,
                           NULL);
-    if (!result.is_null()) {
-      CompilationCache::PutEval(source, context, entry, result);
+    if (!result.is_null() && validate != VALIDATE_JSON) {
+      // For json it's unlikely that we'll ever see exactly the same
+      // string again so we don't use the compilation cache.
+      CompilationCache::PutEval(source, context, is_global, result);
     }
   }
 
@@ -357,24 +398,23 @@ bool Compiler::CompileLazy(Handle<SharedFunctionInfo> shared,
   // Log the code generation. If source information is available include script
   // name and line number. Check explicit whether logging is enabled as finding
   // the line number is not for free.
-  if (Logger::IsEnabled() || OProfileAgent::is_enabled()) {
+  if (Logger::is_logging() || OProfileAgent::is_enabled()) {
     Handle<String> func_name(name->length() > 0 ?
                              *name : shared->inferred_name());
     if (script->name()->IsString()) {
-      int line_num = GetScriptLineNumber(script, start_position);
-      if (line_num > 0) {
-        line_num += script->line_offset()->value() + 1;
-      }
-      LOG(CodeCreateEvent("LazyCompile", *code, *func_name,
+      int line_num = GetScriptLineNumber(script, start_position) + 1;
+      LOG(CodeCreateEvent(Logger::LAZY_COMPILE_TAG, *code, *func_name,
                           String::cast(script->name()), line_num));
       OProfileAgent::CreateNativeCodeRegion(*func_name,
                                             String::cast(script->name()),
-                                            line_num, code->address(),
-                                            code->ExecutableSize());
+                                            line_num,
+                                            code->instruction_start(),
+                                            code->instruction_size());
     } else {
-      LOG(CodeCreateEvent("LazyCompile", *code, *func_name));
-      OProfileAgent::CreateNativeCodeRegion(*func_name, code->address(),
-                                            code->ExecutableSize());
+      LOG(CodeCreateEvent(Logger::LAZY_COMPILE_TAG, *code, *func_name));
+      OProfileAgent::CreateNativeCodeRegion(*func_name,
+                                            code->instruction_start(),
+                                            code->instruction_size());
     }
   }
 #endif
@@ -384,6 +424,13 @@ bool Compiler::CompileLazy(Handle<SharedFunctionInfo> shared,
 
   // Set the expected number of properties for instances.
   SetExpectedNofPropertiesFromEstimate(shared, lit->expected_property_count());
+
+  // Set the optimication hints after performing lazy compilation, as these are
+  // not set when the function is set up as a lazily compiled function.
+  shared->SetThisPropertyAssignmentsInfo(
+      lit->has_only_this_property_assignments(),
+      lit->has_only_simple_this_property_assignments(),
+      *lit->this_property_assignments());
 
   // Check the function has compiled code.
   ASSERT(shared->is_compiled());

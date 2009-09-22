@@ -27,73 +27,18 @@
 
 #include "v8.h"
 
-#include "codegen-inl.h"
-#include "register-allocator-inl.h"
+#include "frame-element.h"
 
 namespace v8 {
 namespace internal {
 
 // -------------------------------------------------------------------------
-// Result implementation.
+// FrameElement implementation.
 
 
-Result::Result(Register reg) {
-  ASSERT(reg.is_valid() && !RegisterAllocator::IsReserved(reg));
-  CodeGeneratorScope::Current()->allocator()->Use(reg);
-  value_ = TypeField::encode(REGISTER) | DataField::encode(reg.code_);
-}
-
-
-Result::ZoneObjectList* Result::ConstantList() {
+FrameElement::ZoneObjectList* FrameElement::ConstantList() {
   static ZoneObjectList list(10);
   return &list;
-}
-
-
-// -------------------------------------------------------------------------
-// RegisterAllocator implementation.
-
-
-Result RegisterAllocator::AllocateWithoutSpilling() {
-  // Return the first free register, if any.
-  int num = registers_.ScanForFreeRegister();
-  if (num == RegisterAllocator::kInvalidRegister) {
-    return Result();
-  }
-  return Result(RegisterAllocator::ToRegister(num));
-}
-
-
-Result RegisterAllocator::Allocate() {
-  Result result = AllocateWithoutSpilling();
-  if (!result.is_valid()) {
-    // Ask the current frame to spill a register.
-    ASSERT(cgen_->has_valid_frame());
-    Register free_reg = cgen_->frame()->SpillAnyRegister();
-    if (free_reg.is_valid()) {
-      ASSERT(!is_used(free_reg));
-      return Result(free_reg);
-    }
-  }
-  return result;
-}
-
-
-Result RegisterAllocator::Allocate(Register target) {
-  // If the target is not referenced, it can simply be allocated.
-  if (!is_used(target)) {
-    return Result(target);
-  }
-  // If the target is only referenced in the frame, it can be spilled and
-  // then allocated.
-  ASSERT(cgen_->has_valid_frame());
-  if (cgen_->frame()->is_used(target) && count(target) == 1)  {
-    cgen_->frame()->Spill(target);
-    ASSERT(!is_used(target));
-    return Result(target);
-  }
-  // Otherwise (if it's referenced outside the frame) we cannot allocate it.
-  return Result();
 }
 
 

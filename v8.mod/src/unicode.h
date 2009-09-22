@@ -28,9 +28,7 @@
 #ifndef V8_UNICODE_H_
 #define V8_UNICODE_H_
 
-#ifndef _WIN32_WCE
 #include <sys/types.h>
-#endif
 
 /**
  * \file

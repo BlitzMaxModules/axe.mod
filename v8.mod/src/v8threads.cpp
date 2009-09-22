@@ -151,6 +151,10 @@ bool ThreadManager::RestoreThread() {
   from = RegExpStack::RestoreStack(from);
   from = Bootstrapper::RestoreState(from);
   Thread::SetThreadLocal(thread_state_key, NULL);
+  if (state->terminate_on_restore()) {
+    StackGuard::TerminateExecution();
+    state->set_terminate_on_restore(false);
+  }
   state->set_id(kInvalidId);
   state->Unlink();
   state->LinkInto(ThreadState::FREE_LIST);
@@ -188,6 +192,7 @@ ThreadState* ThreadState::in_use_anchor_ = new ThreadState();
 
 
 ThreadState::ThreadState() : id_(ThreadManager::kInvalidId),
+                             terminate_on_restore_(false),
                              next_(this), previous_(this) {
 }
 
@@ -236,7 +241,10 @@ ThreadState* ThreadState::Next() {
 }
 
 
-int ThreadManager::next_id_ = 0;
+// Thread ids must start with 1, because in TLS having thread id 0 can't
+// be distinguished from not having a thread id at all (since NULL is
+// defined as 0.)
+int ThreadManager::last_id_ = 0;
 Mutex* ThreadManager::mutex_ = OS::CreateMutex();
 ThreadHandle ThreadManager::mutex_owner_(ThreadHandle::INVALID);
 ThreadHandle ThreadManager::lazily_archived_thread_(ThreadHandle::INVALID);
@@ -245,7 +253,7 @@ ThreadState* ThreadManager::lazily_archived_thread_state_ = NULL;
 
 void ThreadManager::ArchiveThread() {
   ASSERT(!lazily_archived_thread_.IsValid());
-  ASSERT(Thread::GetThreadLocal(thread_state_key) == NULL);
+  ASSERT(!IsArchived());
   ThreadState* state = ThreadState::GetFree();
   state->Unlink();
   Thread::SetThreadLocal(thread_state_key, reinterpret_cast<void*>(state));
@@ -273,6 +281,11 @@ void ThreadManager::EagerlyArchiveThread() {
   to = Bootstrapper::ArchiveState(to);
   lazily_archived_thread_.Initialize(ThreadHandle::INVALID);
   lazily_archived_thread_state_ = NULL;
+}
+
+
+bool ThreadManager::IsArchived() {
+  return Thread::HasThreadLocal(thread_state_key);
 }
 
 
@@ -316,8 +329,28 @@ int ThreadManager::CurrentId() {
 
 
 void ThreadManager::AssignId() {
-  if (!Thread::HasThreadLocal(thread_id_key)) {
-    Thread::SetThreadLocalInt(thread_id_key, next_id_++);
+  if (!HasId()) {
+    ASSERT(Locker::IsLocked());
+    int thread_id = ++last_id_;
+    ASSERT(thread_id > 0);  // see the comment near last_id_ definition.
+    Thread::SetThreadLocalInt(thread_id_key, thread_id);
+    Top::set_thread_id(thread_id);
+  }
+}
+
+
+bool ThreadManager::HasId() {
+  return Thread::HasThreadLocal(thread_id_key);
+}
+
+
+void ThreadManager::TerminateExecution(int thread_id) {
+  for (ThreadState* state = ThreadState::FirstInUse();
+       state != NULL;
+       state = state->Next()) {
+    if (thread_id == state->id()) {
+      state->set_terminate_on_restore(true);
+    }
   }
 }
 

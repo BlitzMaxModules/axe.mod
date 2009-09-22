@@ -31,7 +31,7 @@
 #include "compiler.h"
 #include "execution.h"
 #include "factory.h"
-#include "jsregexp-inl.h"
+#include "jsregexp.h"
 #include "platform.h"
 #include "runtime.h"
 #include "top.h"
@@ -43,6 +43,7 @@
 #include "regexp-macro-assembler-irregexp.h"
 #include "regexp-stack.h"
 
+#ifdef V8_NATIVE_REGEXP
 #if V8_TARGET_ARCH_IA32
 #include "ia32/macro-assembler-ia32.h"
 #include "ia32/regexp-macro-assembler-ia32.h"
@@ -50,7 +51,11 @@
 #include "x64/macro-assembler-x64.h"
 #include "x64/regexp-macro-assembler-x64.h"
 #elif V8_TARGET_ARCH_ARM
+#include "arm/macro-assembler-arm.h"
 #include "arm/regexp-macro-assembler-arm.h"
+#else
+#error Unsupported target architecture.
+#endif
 #endif
 
 #include "interpreter-irregexp.h"
@@ -252,7 +257,7 @@ Handle<Object> RegExpImpl::AtomExec(Handle<JSRegExp> re,
 
   {
     NoHandleAllocation no_handles;
-    FixedArray* array = last_match_info->elements();
+    FixedArray* array = FixedArray::cast(last_match_info->elements());
     SetAtomLastCapture(array, *subject, value, value + needle->length());
   }
   return last_match_info;
@@ -261,7 +266,6 @@ Handle<Object> RegExpImpl::AtomExec(Handle<JSRegExp> re,
 
 // Irregexp implementation.
 
-
 // Ensures that the regexp object contains a compiled version of the
 // source for either ASCII or non-ASCII strings.
 // If the compiled version doesn't already exist, it is compiled
@@ -269,25 +273,27 @@ Handle<Object> RegExpImpl::AtomExec(Handle<JSRegExp> re,
 // If compilation fails, an exception is thrown and this function
 // returns false.
 bool RegExpImpl::EnsureCompiledIrregexp(Handle<JSRegExp> re, bool is_ascii) {
-  int index;
-  if (is_ascii) {
-    index = JSRegExp::kIrregexpASCIICodeIndex;
-  } else {
-    index = JSRegExp::kIrregexpUC16CodeIndex;
-  }
-  Object* entry = re->DataAt(index);
-  if (!entry->IsTheHole()) {
-    // A value has already been compiled.
-    if (entry->IsJSObject()) {
-      // If it's a JS value, it's an error.
-      Top::Throw(entry);
-      return false;
-    }
-    return true;
-  }
+  Object* compiled_code = re->DataAt(JSRegExp::code_index(is_ascii));
+#ifdef V8_NATIVE_REGEXP
+  if (compiled_code->IsCode()) return true;
+#else  // ! V8_NATIVE_REGEXP (RegExp interpreter code)
+  if (compiled_code->IsByteArray()) return true;
+#endif
+  return CompileIrregexp(re, is_ascii);
+}
 
+
+bool RegExpImpl::CompileIrregexp(Handle<JSRegExp> re, bool is_ascii) {
   // Compile the RegExp.
   CompilationZoneScope zone_scope(DELETE_ON_EXIT);
+  Object* entry = re->DataAt(JSRegExp::code_index(is_ascii));
+  if (entry->IsJSObject()) {
+    // If it's a JSObject, a previous compilation failed and threw this object.
+    // Re-throw the object without trying again.
+    Top::Throw(entry);
+    return false;
+  }
+  ASSERT(entry->IsTheHole());
 
   JSRegExp::Flags flags = re->GetFlags();
 
@@ -300,7 +306,7 @@ bool RegExpImpl::EnsureCompiledIrregexp(Handle<JSRegExp> re, bool is_ascii) {
   FlatStringReader reader(pattern);
   if (!ParseRegExp(&reader, flags.is_multiline(), &compile_data)) {
     // Throw an exception if we fail to parse the pattern.
-    // THIS SHOULD NOT HAPPEN. We already parsed it successfully once.
+    // THIS SHOULD NOT HAPPEN. We already pre-parsed it successfully once.
     ThrowRegExpException(re,
                          pattern,
                          compile_data.error,
@@ -323,17 +329,15 @@ bool RegExpImpl::EnsureCompiledIrregexp(Handle<JSRegExp> re, bool is_ascii) {
     Handle<Object> regexp_err =
         Factory::NewSyntaxError("malformed_regexp", array);
     Top::Throw(*regexp_err);
-    re->SetDataAt(index, *regexp_err);
+    re->SetDataAt(JSRegExp::code_index(is_ascii), *regexp_err);
     return false;
   }
 
-  NoHandleAllocation no_handles;
-
-  FixedArray* data = FixedArray::cast(re->data());
-  data->set(index, result.code);
-  int register_max = IrregexpMaxRegisterCount(data);
+  Handle<FixedArray> data = Handle<FixedArray>(FixedArray::cast(re->data()));
+  data->set(JSRegExp::code_index(is_ascii), result.code);
+  int register_max = IrregexpMaxRegisterCount(*data);
   if (result.num_registers > register_max) {
-    SetIrregexpMaxRegisterCount(data, result.num_registers);
+    SetIrregexpMaxRegisterCount(*data, result.num_registers);
   }
 
   return true;
@@ -362,24 +366,12 @@ int RegExpImpl::IrregexpNumberOfRegisters(FixedArray* re) {
 
 
 ByteArray* RegExpImpl::IrregexpByteCode(FixedArray* re, bool is_ascii) {
-  int index;
-  if (is_ascii) {
-    index = JSRegExp::kIrregexpASCIICodeIndex;
-  } else {
-    index = JSRegExp::kIrregexpUC16CodeIndex;
-  }
-  return ByteArray::cast(re->get(index));
+  return ByteArray::cast(re->get(JSRegExp::code_index(is_ascii)));
 }
 
 
 Code* RegExpImpl::IrregexpNativeCode(FixedArray* re, bool is_ascii) {
-  int index;
-  if (is_ascii) {
-    index = JSRegExp::kIrregexpASCIICodeIndex;
-  } else {
-    index = JSRegExp::kIrregexpUC16CodeIndex;
-  }
-  return Code::cast(re->get(index));
+  return Code::cast(re->get(JSRegExp::code_index(is_ascii)));
 }
 
 
@@ -405,14 +397,15 @@ Handle<Object> RegExpImpl::IrregexpExec(Handle<JSRegExp> jsregexp,
   // Prepare space for the return values.
   int number_of_capture_registers =
       (IrregexpNumberOfCaptures(FixedArray::cast(jsregexp->data())) + 1) * 2;
-  OffsetsVector offsets(number_of_capture_registers);
 
+#ifndef V8_NATIVE_REGEXP
 #ifdef DEBUG
   if (FLAG_trace_regexp_bytecodes) {
     String* pattern = jsregexp->Pattern();
     PrintF("\n\nRegexp match:   /%s/\n\n", *(pattern->ToCString()));
     PrintF("\n\nSubject string: '%s'\n\n", *(subject->ToCString()));
   }
+#endif
 #endif
 
   if (!subject->IsFlat()) {
@@ -421,73 +414,85 @@ Handle<Object> RegExpImpl::IrregexpExec(Handle<JSRegExp> jsregexp,
 
   last_match_info->EnsureSize(number_of_capture_registers + kLastMatchOverhead);
 
-  int* offsets_vector = offsets.vector();
-  bool rc;
+  Handle<FixedArray> array;
 
   // Dispatch to the correct RegExp implementation.
-
-  Handle<String> original_subject = subject;
   Handle<FixedArray> regexp(FixedArray::cast(jsregexp->data()));
-  if (UseNativeRegexp()) {
-#if V8_TARGET_ARCH_IA32
-    RegExpMacroAssemblerIA32::Result res;
-    do {
-      bool is_ascii = subject->IsAsciiRepresentation();
-      if (!EnsureCompiledIrregexp(jsregexp, is_ascii)) {
-        return Handle<Object>::null();
-      }
-      Handle<Code> code(RegExpImpl::IrregexpNativeCode(*regexp, is_ascii));
-      res = RegExpMacroAssemblerIA32::Match(code,
-                                            subject,
-                                            offsets_vector,
-                                            offsets.length(),
-                                            previous_index);
-      // If result is RETRY, the string have changed representation, and we
-      // must restart from scratch.
-    } while (res == RegExpMacroAssemblerIA32::RETRY);
-    if (res == RegExpMacroAssemblerIA32::EXCEPTION) {
-      ASSERT(Top::has_pending_exception());
-      return Handle<Object>::null();
-    }
-    ASSERT(res == RegExpMacroAssemblerIA32::SUCCESS
-        || res == RegExpMacroAssemblerIA32::FAILURE);
 
-    rc = (res == RegExpMacroAssemblerIA32::SUCCESS);
-#else
-    UNREACHABLE();
-#endif
-  } else {
+#ifdef V8_NATIVE_REGEXP
+
+  OffsetsVector captures(number_of_capture_registers);
+  int* captures_vector = captures.vector();
+  NativeRegExpMacroAssembler::Result res;
+  do {
     bool is_ascii = subject->IsAsciiRepresentation();
     if (!EnsureCompiledIrregexp(jsregexp, is_ascii)) {
       return Handle<Object>::null();
     }
-    for (int i = number_of_capture_registers - 1; i >= 0; i--) {
-      offsets_vector[i] = -1;
-    }
-    Handle<ByteArray> byte_codes(IrregexpByteCode(*regexp, is_ascii));
+    Handle<Code> code(RegExpImpl::IrregexpNativeCode(*regexp, is_ascii));
+    res = NativeRegExpMacroAssembler::Match(code,
+                                            subject,
+                                            captures_vector,
+                                            captures.length(),
+                                            previous_index);
+    // If result is RETRY, the string have changed representation, and we
+    // must restart from scratch.
+  } while (res == NativeRegExpMacroAssembler::RETRY);
+  if (res == NativeRegExpMacroAssembler::EXCEPTION) {
+    ASSERT(Top::has_pending_exception());
+    return Handle<Object>::null();
+  }
+  ASSERT(res == NativeRegExpMacroAssembler::SUCCESS
+      || res == NativeRegExpMacroAssembler::FAILURE);
 
-    rc = IrregexpInterpreter::Match(byte_codes,
-                                    subject,
-                                    offsets_vector,
-                                    previous_index);
+  if (res != NativeRegExpMacroAssembler::SUCCESS) return Factory::null_value();
+
+  array = Handle<FixedArray>(FixedArray::cast(last_match_info->elements()));
+  ASSERT(array->length() >= number_of_capture_registers + kLastMatchOverhead);
+  // The captures come in (start, end+1) pairs.
+  for (int i = 0; i < number_of_capture_registers; i += 2) {
+    SetCapture(*array, i, captures_vector[i]);
+    SetCapture(*array, i + 1, captures_vector[i + 1]);
   }
 
-  // Handle results from RegExp implementation.
+#else  // ! V8_NATIVE_REGEXP
 
-  if (!rc) {
+  bool is_ascii = subject->IsAsciiRepresentation();
+  if (!EnsureCompiledIrregexp(jsregexp, is_ascii)) {
+    return Handle<Object>::null();
+  }
+  // Now that we have done EnsureCompiledIrregexp we can get the number of
+  // registers.
+  int number_of_registers =
+      IrregexpNumberOfRegisters(FixedArray::cast(jsregexp->data()));
+  OffsetsVector registers(number_of_registers);
+  int* register_vector = registers.vector();
+  for (int i = number_of_capture_registers - 1; i >= 0; i--) {
+    register_vector[i] = -1;
+  }
+  Handle<ByteArray> byte_codes(IrregexpByteCode(*regexp, is_ascii));
+
+  if (!IrregexpInterpreter::Match(byte_codes,
+                                  subject,
+                                  register_vector,
+                                  previous_index)) {
     return Factory::null_value();
   }
 
-  FixedArray* array = last_match_info->elements();
+  array = Handle<FixedArray>(FixedArray::cast(last_match_info->elements()));
   ASSERT(array->length() >= number_of_capture_registers + kLastMatchOverhead);
   // The captures come in (start, end+1) pairs.
-  SetLastCaptureCount(array, number_of_capture_registers);
-  SetLastSubject(array, *original_subject);
-  SetLastInput(array, *original_subject);
-  for (int i = 0; i < number_of_capture_registers; i+=2) {
-    SetCapture(array, i, offsets_vector[i]);
-    SetCapture(array, i + 1, offsets_vector[i + 1]);
+  for (int i = 0; i < number_of_capture_registers; i += 2) {
+    SetCapture(*array, i, register_vector[i]);
+    SetCapture(*array, i + 1, register_vector[i + 1]);
   }
+
+#endif  // V8_NATIVE_REGEXP
+
+  SetLastCaptureCount(*array, number_of_capture_registers);
+  SetLastSubject(*array, *subject);
+  SetLastInput(*array, *subject);
+
   return last_match_info;
 }
 
@@ -896,12 +901,13 @@ void Trace::PerformDeferredActions(RegExpMacroAssembler* assembler,
   // The "+1" is to avoid a push_limit of zero if stack_limit_slack() is 1.
   const int push_limit = (assembler->stack_limit_slack() + 1) / 2;
 
+  // Count pushes performed to force a stack limit check occasionally.
+  int pushes = 0;
+
   for (int reg = 0; reg <= max_register; reg++) {
     if (!affected_registers.Get(reg)) {
       continue;
     }
-    // Count pushes performed to force a stack limit check occasionally.
-    int pushes = 0;
 
     // The chronologically first deferred action in the trace
     // is used to infer the action needed to restore a register
@@ -1717,6 +1723,8 @@ bool RegExpNode::EmitQuickCheck(RegExpCompiler* compiler,
   GetQuickCheckDetails(details, compiler, 0, trace->at_start() == Trace::FALSE);
   if (details->cannot_match()) return false;
   if (!details->Rationalize(compiler->ascii())) return false;
+  ASSERT(details->characters() == 1 ||
+         compiler->macro_assembler()->CanReadUnaligned());
   uint32_t mask = details->mask();
   uint32_t value = details->value();
 
@@ -1885,7 +1893,8 @@ void TextNode::GetQuickCheckDetails(QuickCheckDetails* details,
         uint32_t differing_bits = (from ^ to);
         // A mask and compare is only perfect if the differing bits form a
         // number like 00011111 with one single block of trailing 1s.
-        if ((differing_bits & (differing_bits + 1)) == 0) {
+        if ((differing_bits & (differing_bits + 1)) == 0 &&
+             from + differing_bits == to) {
           pos->determines_perfectly = true;
         }
         uint32_t common_bits = ~SmearBitsRight(differing_bits);
@@ -2515,20 +2524,20 @@ void LoopChoiceNode::Emit(RegExpCompiler* compiler, Trace* trace) {
 
 int ChoiceNode::CalculatePreloadCharacters(RegExpCompiler* compiler) {
   int preload_characters = EatsAtLeast(4, 0);
-#ifdef V8_HOST_CAN_READ_UNALIGNED
-  bool ascii = compiler->ascii();
-  if (ascii) {
-    if (preload_characters > 4) preload_characters = 4;
-    // We can't preload 3 characters because there is no machine instruction
-    // to do that.  We can't just load 4 because we could be reading
-    // beyond the end of the string, which could cause a memory fault.
-    if (preload_characters == 3) preload_characters = 2;
+  if (compiler->macro_assembler()->CanReadUnaligned()) {
+    bool ascii = compiler->ascii();
+    if (ascii) {
+      if (preload_characters > 4) preload_characters = 4;
+      // We can't preload 3 characters because there is no machine instruction
+      // to do that.  We can't just load 4 because we could be reading
+      // beyond the end of the string, which could cause a memory fault.
+      if (preload_characters == 3) preload_characters = 2;
+    } else {
+      if (preload_characters > 2) preload_characters = 2;
+    }
   } else {
-    if (preload_characters > 2) preload_characters = 2;
+    if (preload_characters > 1) preload_characters = 1;
   }
-#else
-  if (preload_characters > 1) preload_characters = 1;
-#endif
   return preload_characters;
 }
 
@@ -4189,6 +4198,11 @@ OutSet* DispatchTable::Get(uc16 value) {
 
 
 void Analysis::EnsureAnalyzed(RegExpNode* that) {
+  StackLimitCheck check;
+  if (check.HasOverflowed()) {
+    fail("Stack overflow");
+    return;
+  }
   if (that->info()->been_analyzed || that->info()->being_analyzed)
     return;
   that->info()->being_analyzed = true;
@@ -4226,16 +4240,20 @@ void Analysis::VisitText(TextNode* that) {
     that->MakeCaseIndependent();
   }
   EnsureAnalyzed(that->on_success());
-  that->CalculateOffsets();
+  if (!has_failed()) {
+    that->CalculateOffsets();
+  }
 }
 
 
 void Analysis::VisitAction(ActionNode* that) {
   RegExpNode* target = that->on_success();
   EnsureAnalyzed(target);
-  // If the next node is interested in what it follows then this node
-  // has to be interested too so it can pass the information on.
-  that->info()->AddFromFollowing(target->info());
+  if (!has_failed()) {
+    // If the next node is interested in what it follows then this node
+    // has to be interested too so it can pass the information on.
+    that->info()->AddFromFollowing(target->info());
+  }
 }
 
 
@@ -4244,6 +4262,7 @@ void Analysis::VisitChoice(ChoiceNode* that) {
   for (int i = 0; i < that->alternatives()->length(); i++) {
     RegExpNode* node = that->alternatives()->at(i).node();
     EnsureAnalyzed(node);
+    if (has_failed()) return;
     // Anything the following nodes need to know has to be known by
     // this node also, so it can pass it on.
     info->AddFromFollowing(node->info());
@@ -4257,13 +4276,16 @@ void Analysis::VisitLoopChoice(LoopChoiceNode* that) {
     RegExpNode* node = that->alternatives()->at(i).node();
     if (node != that->loop_node()) {
       EnsureAnalyzed(node);
+      if (has_failed()) return;
       info->AddFromFollowing(node->info());
     }
   }
   // Check the loop last since it may need the value of this node
   // to get a correct result.
   EnsureAnalyzed(that->loop_node());
-  info->AddFromFollowing(that->loop_node()->info());
+  if (!has_failed()) {
+    info->AddFromFollowing(that->loop_node()->info());
+  }
 }
 
 
@@ -4435,38 +4457,39 @@ RegExpEngine::CompilationResult RegExpEngine::Compile(RegExpCompileData* data,
   data->node = node;
   Analysis analysis(ignore_case);
   analysis.EnsureAnalyzed(node);
+  if (analysis.has_failed()) {
+    const char* error_message = analysis.error_message();
+    return CompilationResult(error_message);
+  }
 
   NodeInfo info = *node->info();
 
-  if (RegExpImpl::UseNativeRegexp()) {
-#ifdef V8_TARGET_ARCH_ARM
-    UNREACHABLE();
+  // Create the correct assembler for the architecture.
+#ifdef V8_NATIVE_REGEXP
+  // Native regexp implementation.
+
+  NativeRegExpMacroAssembler::Mode mode =
+      is_ascii ? NativeRegExpMacroAssembler::ASCII
+               : NativeRegExpMacroAssembler::UC16;
+
+#if V8_TARGET_ARCH_IA32
+  RegExpMacroAssemblerIA32 macro_assembler(mode, (data->capture_count + 1) * 2);
+#elif V8_TARGET_ARCH_X64
+  RegExpMacroAssemblerX64 macro_assembler(mode, (data->capture_count + 1) * 2);
+#elif V8_TARGET_ARCH_ARM
+  RegExpMacroAssemblerARM macro_assembler(mode, (data->capture_count + 1) * 2);
 #endif
-#ifdef V8_TARGET_ARCH_X64
-    UNREACHABLE();
-#endif
-#ifdef V8_TARGET_ARCH_IA32
-    RegExpMacroAssemblerIA32::Mode mode;
-    if (is_ascii) {
-      mode = RegExpMacroAssemblerIA32::ASCII;
-    } else {
-      mode = RegExpMacroAssemblerIA32::UC16;
-    }
-    RegExpMacroAssemblerIA32 macro_assembler(mode,
-                                             (data->capture_count + 1) * 2);
-    return compiler.Assemble(&macro_assembler,
-                             node,
-                             data->capture_count,
-                             pattern);
-#endif
-  }
+
+#else  // ! V8_NATIVE_REGEXP
+  // Interpreted regexp implementation.
   EmbeddedVector<byte, 1024> codes;
   RegExpMacroAssemblerIrregexp macro_assembler(codes);
+#endif
+
   return compiler.Assemble(&macro_assembler,
                            node,
                            data->capture_count,
                            pattern);
 }
-
 
 }}  // namespace v8::internal
