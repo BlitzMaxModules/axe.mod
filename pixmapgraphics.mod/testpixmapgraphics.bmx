@@ -4,13 +4,10 @@ Import axe.PixmapGraphics
 
 Global DisplayGraphics:TGraphics
 
-
-Function PixmapGraphics:TGraphics(pix:TPixmap)
-	Return New TPixmapGraphics.CreateFromPixmap(pix)
-End Function
-
-Function drawtopixmap(pix:TPixmap)
-	Local gfx:TGraphics=PixmapGraphics(pix)	
+Function testpixmapdrawing(pix:TPixmap)
+	Local gfx:TGraphics
+	
+	gfx=PixmapGraphics(pix)	
 	
 	SetGraphics gfx
 	SetClsColor 255,0,255
@@ -23,21 +20,26 @@ Function drawtopixmap(pix:TPixmap)
 	SetColor 255,255,255
 	DrawLine 0,0,100,100
 	Flip
+
 	CloseGraphics gfx
 	SetGraphics DisplayGraphics
 
 End Function
 
+
+Local pix:TPixmap
 Local image:TImage
 
-DisplayGraphics= Graphics(640,480)
+DisplayGraphics=Graphics(640,480)
 
-Local pix:TPixmap=CreatePixmap(256,256,PF_COLORALPHA)
+pix=CreatePixmap(256,256,PF_COLORALPHA)
 
-drawtopixmap(pix)
+testpixmapdrawing(pix)
 
 image=LoadImage(pix)
+
 DrawImage image,0,0
+
 Flip
 
 

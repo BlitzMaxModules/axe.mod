@@ -231,7 +231,6 @@ Type TPixmapGraphics Extends TGraphics
 
 	Method CreateFromPixmap:TPixmapGraphics(pix:TPixmap)
 		_pix=pix
-'		_max2d=TMax2DGraphics.
 		_max2d=TMax2DGraphics.Create( Self,pixmapdriver )
 		Return Self
 	End Method	
