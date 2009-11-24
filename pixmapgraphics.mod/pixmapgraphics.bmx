@@ -3,7 +3,7 @@ Strict
 Rem
 bbdoc: PixmapGraphics
 End Rem
-Module axe.pixmapgraphics
+Module axe.PixmapGraphics
 
 ModuleInfo "Version: 0.01"
 ModuleInfo "Author: Simon Armstrong"
@@ -27,7 +27,10 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 
 	Method CreateFrameFromPixmap:TImageFrame( pixmap:TPixmap,flags ) 
 	End Method
-	
+
+	Method SetResolution(width#,height#)
+	End Method
+		
 	Method SetBlend( blend ) 
 		_blend=blend
 	End Method
@@ -256,29 +259,3 @@ EndRem
 Function PixmapGraphics:TPixmapGraphics(pix:TPixmap)
 	Return New TPixmapGraphics.CreateFromPixmap(pix)
 End Function
-
-
-Rem
-
-Function PixmapGraphics:TGraphics(pix:TPixmap)
-	Return New TPixmapGraphics.CreateFromPixmap(pix)
-End Function
-
-Local pix:TPixmap=CreatePixmap(256,256,PF_COLORALPHA)
-Local gfx:TGraphics=PixmapGraphics(pix)
-
-SetGraphics gfx
-SetClsColor 255,0,255
-Cls
-SetColor 0,255,255
-Plot 50,50
-Plot 100,100
-DrawLine 0,0,100,100
-
-DrawRect 20,20,200,200
-Flip
-
-SavePixmapPNG pix,"test.png"
-
-
-EndRem
