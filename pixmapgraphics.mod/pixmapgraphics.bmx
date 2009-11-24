@@ -5,9 +5,8 @@ bbdoc: PixmapGraphics
 End Rem
 Module axe.PixmapGraphics
 
-ModuleInfo "Version: 0.01"
+ModuleInfo "Version: 0.02"
 ModuleInfo "Author: Simon Armstrong"
-ModuleInfo "Modserver: BRL"
 
 Import brl.max2d
 
@@ -19,7 +18,7 @@ Type TPixmapFrame Extends TImageFrame
 		
 	Method Draw( x0#,y0#,x1#,y1#,tx#,ty# )
 		Local dest:TPixmap		
-		_owner.DrawRect(x0,y0,x1-x0,y1-y0,tx,ty)
+		_owner.DrawPixRect(x0,y0,x1-x0,y1-y0,tx,ty,_pix)
 	End Method
 
 	Method init:TPixmapFrame(owner:TPixmapDriver,pixmap:TPixmap,flags)
@@ -207,6 +206,52 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 				p[x]=_color
 			Next
 			p:+_span
+		Next
+	End Method
+
+	Method DrawPixRect( lx0#,ly0#,lx1#,ly1#,tx#,ty#,srcpix:TPixmap ) 
+		Local src:Int Ptr
+		Local srcspan:Int
+		Local dest:Int Ptr
+		Local x,y
+		Local x0,y0,x1,y1
+		Local c,c1,a,a1
+		Local r,g,b
+				
+		x0=tx+lx0
+		y0=ty+ly0
+		x1=tx+lx1
+		y1=ty+ly1		
+		x0=Max(_clipx,x0)
+		y0=Max(_clipy,y0)
+		x1=Min(_clipx+_clipw-1,x1)
+		y1=Min(_clipy+_cliph-1,y1)		
+
+		src=Int Ptr srcpix.pixels
+		srcspan=srcpix.width
+		
+		src=src+(y0-ty)*srcspan+(x0-tx-x0)
+		dest=_pix+y0*_span
+
+		For y=y0 Until y1
+			For x=x0 Until x1
+				c=src[x]
+				a=(c Shr 24)&255
+				If a				
+					If a<>255
+						DebugLog "a="+a
+						c1=dest[x]
+						a1=255-a
+						r=( ((c Shr 16)&255)*a+((c1 Shr 16)&255)*a1 ) Shr 8
+						g=( ((c Shr 8)&255)*a+((c1 Shr 8)&255)*a1 ) Shr 8
+						b=( (c&255)*a+(c1&255)*a1 ) Shr 8						
+						c=$ff000000 | (r Shl 16) | (g Shl 8) | b
+					EndIf
+					dest[x]=c
+				EndIf
+			Next
+			src:+srcspan
+			dest:+_span
 		Next
 	End Method
 

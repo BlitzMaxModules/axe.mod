@@ -5,9 +5,14 @@ Import axe.PixmapGraphics
 Global DisplayGraphics:TGraphics
 
 Function testpixmapdrawing(pix:TPixmap)
+	Local image2:TImage
+
 	Local gfx:TGraphics
 	
 	gfx=PixmapGraphics(pix)	
+
+	image2=LoadImage("bmax120.png")
+	If image2=Null End
 	
 	SetGraphics gfx
 	SetClsColor 255,0,255
@@ -21,6 +26,8 @@ Function testpixmapdrawing(pix:TPixmap)
 	DrawLine 0,0,100,100
 	
 	DrawText "Hello World",100,10
+
+	DrawImage image2,100,100
 	
 	Flip
 
@@ -33,9 +40,10 @@ End Function
 Local pix:TPixmap
 Local image:TImage
 
+
 DisplayGraphics=Graphics(640,480)
 
-pix=CreatePixmap(256,256,PF_COLORALPHA)
+pix=CreatePixmap(256,256,PF_RGBA8888)
 
 testpixmapdrawing(pix)
 
