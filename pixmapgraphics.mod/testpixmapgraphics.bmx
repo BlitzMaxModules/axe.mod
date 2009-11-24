@@ -10,11 +10,11 @@ Function testpixmapdrawing(pix:TPixmap)
 	Local gfx:TGraphics
 	
 	gfx=PixmapGraphics(pix)	
+	SetGraphics gfx
 
 	image2=LoadImage("bmax120.png")
 	If image2=Null End
 	
-	SetGraphics gfx
 	SetClsColor 255,0,255
 	Cls
 	SetColor 0,255,255
