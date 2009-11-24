@@ -16,9 +16,12 @@ Function testpixmapdrawing(pix:TPixmap)
 	Plot 50,50
 	Plot 100,100
 	SetColor 0,25,25
-	DrawRect 20,20,200,200
+	DrawRect 200,20,200,200
 	SetColor 255,255,255
 	DrawLine 0,0,100,100
+	
+	DrawText "Hello World",100,10
+	
 	Flip
 
 	CloseGraphics gfx
@@ -42,8 +45,9 @@ DrawImage image,0,0
 
 Flip
 
+While True
+	If WaitEvent()=EVENT_APPTERMINATE End		
+Wend
 
-WaitKey
 
-End
 

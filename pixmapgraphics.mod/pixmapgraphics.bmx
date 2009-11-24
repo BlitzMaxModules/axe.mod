@@ -11,6 +11,26 @@ ModuleInfo "Modserver: BRL"
 
 Import brl.max2d
 
+Type TPixmapFrame Extends TImageFrame
+	
+	Field _owner:TPixmapDriver
+	Field _pix:TPixmap
+	Field _flags:Int
+		
+	Method Draw( x0#,y0#,x1#,y1#,tx#,ty# )
+		Local dest:TPixmap		
+		_owner.DrawRect(x0,y0,x1-x0,y1-y0,tx,ty)
+	End Method
+
+	Method init:TPixmapFrame(owner:TPixmapDriver,pixmap:TPixmap,flags)
+		_owner=owner
+		_pix=pixmap
+		_flags=flags
+		Return Self
+	End Method
+
+End Type
+
 Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 
 	Field _pixmap:TPixmap
@@ -24,11 +44,11 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 	Field _color
 	Field _clscolor
 	Field _clipx,_clipy,_clipw,_cliph
+	Field _hastrans
+	Field _trans[4]
 
 	Method CreateFrameFromPixmap:TImageFrame( pixmap:TPixmap,flags ) 
-	End Method
-
-	Method SetResolution(width#,height#)
+		Return New TPixmapFrame.init(Self,pixmap,flags)
 	End Method
 		
 	Method SetBlend( blend ) 
@@ -55,6 +75,15 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 	End Method
 	
 	Method SetTransform( xx#,xy#,yx#,yy# ) 
+		If xx=1.0 And xy=0.0 And yx=0.0 And yy=1.0
+			_hastrans=False
+		Else
+			_trans[0]=xx
+			_trans[1]=xy
+			_trans[2]=yx
+			_trans[3]=yy		
+			_hastrans=True
+		EndIf
 	End Method
 
 	Method SetLineWidth( width# ) 
@@ -163,10 +192,11 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 		Local p:Int Ptr
 		Local x,y
 		Local x0,y0,x1,y1
-		x0=lx0
-		y0=ly0
-		x1=lx1
-		y1=ly1		
+		
+		x0=tx+lx0
+		y0=ty+ly0
+		x1=tx+lx1
+		y1=ty+ly1		
 		x0=Max(_clipx,x0)
 		y0=Max(_clipy,y0)
 		x1=Min(_clipx+_clipw-1,x1)
@@ -197,6 +227,9 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 	Method GraphicsModes:TGraphicsMode[]()
 	End Method 
 	
+	Method SetResolution(width#,height#)
+	End Method
+
 	Method AttachGraphics:TGraphics( widget,flags )
 	End Method 
 	
@@ -245,7 +278,6 @@ Type TPixmapGraphics Extends TGraphics
 	End Method
 
 	Method Close()
-		DebugStop
 	End Method
 	
 End Type
