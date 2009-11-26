@@ -8,7 +8,22 @@ Module axe.PixmapGraphics
 ModuleInfo "Version: 0.02"
 ModuleInfo "Author: Simon Armstrong"
 
+ModuleInfo "History: 1.01 Release"
+ModuleInfo "History: Added anti alias linedrawing by AGG"
+
 Import brl.max2d
+
+Import "agg.cpp"
+Import "aggpixmap.cpp"
+
+Extern "C"
+	Function ras_open%(pixels:Byte Ptr,width,height)
+	Function ras_close(rashandle)
+	Function ras_clear(rashandle)
+	Function ras_moveto(rashandle,x,y)
+	Function ras_lineto(rashandle,x,y)
+	Function ras_render(rashandle,r,g,b,a)
+End Extern
 
 Type TPixmapFrame Extends TImageFrame
 	
@@ -46,6 +61,9 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 	Field _hastrans
 	Field _trans[4]
 
+	Field _ras:Int
+	Field _linewidth#
+	
 	Method CreateFrameFromPixmap:TImageFrame( pixmap:TPixmap,flags ) 
 		Return New TPixmapFrame.init(Self,pixmap,flags)
 	End Method
@@ -86,6 +104,7 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 	End Method
 
 	Method SetLineWidth( width# ) 
+		_linewidth=256*width
 	End Method
 	
 	Method Cls() 
@@ -110,6 +129,29 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 	End Method
 
 	Method DrawLine( lx0#,ly0#,lx1#,ly1#,tx#,ty# ) 
+		Local x1#,y1#,x2#,y2#
+				
+		x1=(tx+lx0)*256
+		y1=(ty+ly0)*256
+		x2=(tx+lx1)*256
+		y2=(ty+ly1)*256	
+
+		Local dx# = x2 - x1
+		Local dy# = y2 - y1
+		Local d# = Sqr(dx*dx + dy*dy)		
+
+		dx = _linewidth * (y2 - y1) / d
+		dy = _linewidth * (x2 - x1) / d	
+		
+		ras_moveto(_ras,x1 - dx,  y1 + dy)
+		ras_lineto(_ras,x2 - dx,  y2 + dy)
+		ras_lineto(_ras,x2 + dx,  y2 - dy)
+		ras_lineto(_ras,x1 + dx,  y1 - dy)
+		ras_render(_ras,255,255,255,255)
+	End Method
+
+
+	Method DrawLine2( lx0#,ly0#,lx1#,ly1#,tx#,ty# ) 
 		Local x0,y0,x1,y1
 		Local cx0,cy0,cx1,cy1
 		Local dx,dy
@@ -286,6 +328,7 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 		pgfx=TPixmapGraphics(g)
 		If pgfx 
 			_pixmap=pgfx._pix
+			_ras=pgfx._rashandle
 			_width=_pixmap.width
 			_height=_pixmap.height
 			_clipx=0
@@ -306,9 +349,11 @@ End Type
 Type TPixmapGraphics Extends TGraphics
 	Field _pix:TPixmap
 	Field _max2d:TMax2DGraphics
+	Field _rashandle:Int
 
 	Method CreateFromPixmap:TPixmapGraphics(pix:TPixmap)
 		_pix=pix
+		_rashandle=ras_open(pix.pixelptr(0,0),pix.width,pix.height)
 		_max2d=TMax2DGraphics.Create( Self,pixmapdriver )
 		Return Self
 	End Method	
