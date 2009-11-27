@@ -301,7 +301,6 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 				a=(c Shr 24)&255
 				If a				
 					If a<>255
-						DebugLog "a="+a
 						c1=dest[x]
 						a1=255-a
 						r=( ((c Shr 16)&255)*a+((c1 Shr 16)&255)*a1 ) Shr 8

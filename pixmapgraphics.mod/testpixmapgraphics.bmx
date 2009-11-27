@@ -12,7 +12,7 @@ Function testpixmapdrawing(pix:TPixmap)
 	gfx=PixmapGraphics(pix)	
 	SetGraphics gfx
 
-	image2=LoadImage("bmax120.png")
+	image2=LoadImage("b-max.png")
 	If image2=Null End
 	
 	SetClsColor 255,0,255
@@ -25,8 +25,10 @@ Function testpixmapdrawing(pix:TPixmap)
 	SetColor 255,255,255
 	DrawLine 0,0,100,100
 	
-	Local tri#[]=[50.0,0.0,100.0,100.0,0.0,100.0]
-
+	Local tri#[]=New Float[100]
+	For Local i=0 Until 100
+		tri[i]=Rnd(300)
+	Next
 	DrawPoly tri	
 	
 	DrawText "Hello World",100,10
@@ -47,7 +49,7 @@ Local image:TImage
 
 DisplayGraphics=Graphics(640,480)
 
-pix=CreatePixmap(256,256,PF_RGBA8888)
+pix=CreatePixmap(640,400,PF_RGBA8888)
 
 testpixmapdrawing(pix)
 
