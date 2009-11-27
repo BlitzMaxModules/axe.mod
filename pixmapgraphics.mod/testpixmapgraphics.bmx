@@ -25,6 +25,10 @@ Function testpixmapdrawing(pix:TPixmap)
 	SetColor 255,255,255
 	DrawLine 0,0,100,100
 	
+	Local tri#[]=[50.0,0.0,100.0,100.0,0.0,100.0]
+
+	DrawPoly tri	
+	
 	DrawText "Hello World",100,10
 
 	DrawImage image2,100,100

@@ -150,6 +150,26 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 		ras_render(_ras,255,255,255,255)
 	End Method
 
+	Method DrawPoly( xy#[],handlex#,handley#,originx#,originy# ) 
+		Local n,i,ii
+		Local x0#,y0#,x,y
+		
+		n=xy.length Shr 1
+		For i=0 To n
+			ii=i	
+			If ii=n Then ii=0	
+			x=xy[ii*2+0]*256
+			y=xy[ii*2+1]*256			
+			If i=0
+				ras_moveto(_ras,x,y)
+			Else
+				ras_lineto(_ras,x,y)
+			EndIf
+		Next			
+		ras_render(_ras,255,255,255,255)
+		
+	End Method
+
 
 	Method DrawLine2( lx0#,ly0#,lx1#,ly1#,tx#,ty# ) 
 		Local x0,y0,x1,y1
@@ -298,9 +318,6 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 	End Method
 
 	Method DrawOval( lx0#,ly0#,lx1#,ly1#,tx#,ty# ) 
-	End Method
-
-	Method DrawPoly( xy#[],handlex#,handley#,originx#,originy# ) 
 	End Method
 		
 	Method DrawPixmap( pixmap:TPixmap,x,y ) 
