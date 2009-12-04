@@ -31,7 +31,8 @@ Type TPixmapFrame Extends TImageFrame
 	Field _pix:TPixmap
 	Field _flags:Int
 		
-	Method Draw( x0#,y0#,x1#,y1#,tx#,ty# )
+	Method Draw( x0#,y0#,x1#,y1#,tx#,ty#,sx#,sy#,sw#,sh# )
+'	Method Draw( x0#,y0#,x1#,y1#,tx#,ty# )
 		Local dest:TPixmap		
 		_owner.DrawPixRect(x0,y0,x1-x0,y1-y0,tx,ty,_pix)
 	End Method
