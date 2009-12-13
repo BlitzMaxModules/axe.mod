@@ -41,9 +41,7 @@ int PollWiimotes(){
 }
 
 int CloseWiimotes(){
-
-	[discovery end]
-	
+//	[discovery end]
 	return 0;
 }
 

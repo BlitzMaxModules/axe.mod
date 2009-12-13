@@ -19,7 +19,6 @@ Const paFloat32	:Int=1
 Const paInt8	:Int=32
 Const paUInt8	:Int=64
 
-
 Const paClipOff:Int=1
 
 Global samples:TAudioSample[4]
