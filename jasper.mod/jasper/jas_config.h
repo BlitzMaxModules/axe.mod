@@ -172,11 +172,11 @@
 
 //simon was here
 
-#ifndef __APPLE__
-#define uint unsigned int
-#endif
+#if __APPLE__
 #define ulong unsigned long
+#endif
 
+//#define uint unsigned int
 
 /* Define to `unsigned long' if <sys/types.h> does not define. */
 /* #undef ulong */
