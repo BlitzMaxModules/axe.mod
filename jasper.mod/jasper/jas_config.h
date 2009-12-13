@@ -172,7 +172,9 @@
 
 //simon was here
 
+#ifndef __APPLE__
 #define uint unsigned int
+#endif
 #define ulong unsigned long
 
 
