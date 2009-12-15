@@ -176,7 +176,9 @@
 #define ulong unsigned long
 #endif
 
-//#define uint unsigned int
+#ifdef _WIN32
+#define uint unsigned int
+#endif
 
 /* Define to `unsigned long' if <sys/types.h> does not define. */
 /* #undef ulong */
