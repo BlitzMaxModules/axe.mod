@@ -177,6 +177,7 @@
 #endif
 
 #ifdef _WIN32
+#define ulong unsigned long
 #define uint unsigned int
 #endif
 
