@@ -5,4 +5,3 @@ Function enumports()
 End Extern
 
 DebugLog "enumports()="+enumports()
-

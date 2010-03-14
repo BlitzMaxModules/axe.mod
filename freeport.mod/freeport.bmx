@@ -5,7 +5,7 @@ End Rem
 
 Module axe.FreePort
 
-ModuleInfo "Version: 1.03"
+ModuleInfo "Version: 1.04"
 ModuleInfo "Author: Simon Armstrong"
 ModuleInfo "License: Public Domain"
 ModuleInfo "Copyright: Armstrong Communications Ltd"
