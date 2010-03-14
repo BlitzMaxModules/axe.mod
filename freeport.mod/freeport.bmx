@@ -11,6 +11,8 @@ ModuleInfo "License: Public Domain"
 ModuleInfo "Copyright: Armstrong Communications Ltd"
 ModuleInfo "Modserver: BRL"
 
+ModuleInfo "History: 1.05 Release"
+ModuleInfo "History: added Linux support"
 ModuleInfo "History: 1.04 Release"
 ModuleInfo "History: added StandardIOPort global port"
 ModuleInfo "History: 1.03 Release"
@@ -29,6 +31,8 @@ Import pub.freeprocess
 ' ComCount()
 ' ComName$(index)
 ' ComInfo$(index)
+
+
 
 ?MacOS
 Import "freeport.macos.c"
@@ -75,15 +79,18 @@ End Function
 Import pub.win32
 Import "freeport.win32.bmx"
 ?Linux
-'Import "freeport.linux.c"
+Import "freeport.linux.c"
 Extern "C"
 Function enumports(charbuffer:Byte Ptr,buffersize)	'null separated device list
 Function openserial(portname$z,baud)
 Function closeserial(handle)
-Function ComCount()
-Function ComName$(index)
-Function ComInfo$(index)
 End Extern
+Function ComCount()
+End Function
+Function ComName$(index)
+End Function
+Function ComInfo$(index)
+End Function
 ?
 
 Type TComPort Extends TPipeStream
