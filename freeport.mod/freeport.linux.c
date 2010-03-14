@@ -5,138 +5,160 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/ioctl.h>
-//#include <linux/joystick.h>
+
+#include <errno.h>
+#include <termios.h>
 
 int openserial(const char *deviceFilePath,int baudrate){
 	int         fileDescriptor = -1;
 	int         handshake;
 	
 	struct termios  options;
+
+	static struct termios gOriginalTTYAttrs;
 	
 	fileDescriptor = open(deviceFilePath, O_RDWR | O_NOCTTY | O_NONBLOCK);
+
 	if (fileDescriptor == -1){
 		printf("Error opening serial port %s - %s(%d).\n", deviceFilePath, strerror(errno), errno);
-		return -1;
+		return 0;
 	}	
+
+    if (ioctl(fileDescriptor, TIOCEXCL) == -1) {
+        printf("Error setting TIOCEXCL on %s - %s(%d).\n", deviceFilePath, strerror(errno), errno);
+        return 0;
+    }
+
+    if (fcntl(fileDescriptor, F_SETFL, 0) == -1)
+    {
+        printf("Error clearing O_NONBLOCK %s - %s(%d).\n", deviceFilePath, strerror(errno), errno);
+        return 0;
+    }
+
+
+
+
+// Get the current options and save them so we can restore the 
+// default settings later.
+if (tcgetattr(fileDescriptor, &gOriginalTTYAttrs) == -1){
+printf("Error getting tty attributes %s - %s(%d).\n",deviceFilePath, strerror(errno), errno);
+return 0;
+}
+
+// The serial port attributes such as timeouts and baud rate are set by 
+// modifying the termios structure and then calling tcsetattr to
+// cause the changes to take effect. Note that the
+// changes will not take effect without the tcsetattr() call.
+// See tcsetattr(4) ("man 4 tcsetattr") for details.
+
+options = gOriginalTTYAttrs;
+
+// Print the current input and output baud rates.
+// See tcsetattr(4) ("man 4 tcsetattr") for details.
+
+printf("Current input baud rate is %d\n", (int) cfgetispeed(&options));
+printf("Current output baud rate is %d\n", (int) cfgetospeed(&options));
+
+// Set raw input (non-canonical) mode, with reads blocking until either 
+// a single character has been received or a one second timeout expires.
+// See tcsetattr(4) ("man 4 tcsetattr") and termios(4) ("man 4 termios") 
+// for details.
+
+cfmakeraw(&options);
+options.c_cc[VMIN] = 1;
+options.c_cc[VTIME] = 10;
+
+// The baud rate, word length, and handshake options can be set as follows:
+
+cfsetspeed(&options, B115200);
+
+// only for OSX - options.c_cflag |= (CS8|CCTS_OFLOW|CRTS_IFLOW);
+
+
+cfsetspeed(&options, B19200);   // Set 19200 baud    
+options.c_cflag |= (CS7        |// Use 7 bit words
+PARENB);/* for OSX     |        // Enable parity (even parity if PARODD 
+             // not also set)
+CCTS_OFLOW |        // CTS flow control of output
+CRTS_IFLOW);        // RTS flow control of input
+*/
+
+// Print the new input and output baud rates.
+
+printf("Input baud rate changed to %d\n", (int) cfgetispeed(&options));
+printf("Output baud rate changed to %d\n", (int) cfgetospeed(&options));
+
+// Cause the new options to take effect immediately.
+if (tcsetattr(fileDescriptor, TCSANOW, &options) == -1){
+	printf("Error setting tty attributes %s - %s(%d).\n",deviceFilePath, strerror(errno), errno);
 	return 0;
- }
+}
+
+/* osx only
+// To set the modem handshake lines, use the following ioctls.
+// See tty(4) ("man 4 tty") and ioctl(2) ("man 2 ioctl") for details.
+
+if (ioctl(fileDescriptor, TIOCSDTR) == -1) 
+// Assert Data Terminal Ready (DTR)
+{
+printf("Error asserting DTR %s - %s(%d).\n",deviceFilePath, strerror(errno), errno);
+}
+
+if (ioctl(fileDescriptor, TIOCCDTR) == -1) 
+// Clear Data Terminal Ready (DTR)
+{
+printf("Error clearing DTR %s - %s(%d).\n",
+deviceFilePath, strerror(errno), errno);
+}
+*/
+
+handshake = TIOCM_DTR | TIOCM_RTS | TIOCM_CTS | TIOCM_DSR;
+// Set the modem lines depending on the bits set in handshake.
+if (ioctl(fileDescriptor, TIOCMSET, &handshake) == -1){
+	printf("Error setting handshake lines %s - %s(%d).\n",deviceFilePath, strerror(errno), errno);
+}
+
+// To read the state of the modem lines, use the following ioctl.
+// See tty(4) ("man 4 tty") and ioctl(2) ("man 2 ioctl") for details.
+
+if (ioctl(fileDescriptor, TIOCMGET, &handshake) == -1){
+	printf("Error getting handshake lines %s - %s(%d).\n",deviceFilePath, strerror(errno), errno);
+}
+
+printf("Handshake lines currently set to %d\n", handshake);    
+
+
+
+
+	return fileDescriptor;
+}
+
+void closeserial(int fileDescriptor){
+// Block until all written output has been sent from the device.
+// Note that this call is simply passed on to the serial device driver.
+// See tcsendbreak(3) ("man 3 tcsendbreak") for details.
+
+	if (tcdrain(fileDescriptor) == -1){
+		printf("Error waiting for drain - %s(%d).\n",strerror(errno), errno);
+	}
+	
+	// It is good practice to reset a serial port back to the state in
+	// which you found it. This is why we saved the original termios struct
+	// The constant TCSANOW (defined in termios.h) indicates that
+	// the change should take effect immediately.
+/*
+	if (tcsetattr(fileDescriptor, TCSANOW, &gOriginalTTYAttrs) == -1){
+		printf("Error resetting tty attributes - %s(%d).\n",
+		strerror(errno), errno);
+	}
+*/	
+	close(fileDescriptor);
+}
+
+
 
 /*
-    // Note that open() follows POSIX semantics: multiple open() calls to 
-    // the same file will succeed unless the TIOCEXCL ioctl is issued.
-    // This will prevent additional opens except by root-owned processes.
-    // See tty(4) ("man 4 tty") and ioctl(2) ("man 2 ioctl") for details.
  
-    if (ioctl(fileDescriptor, TIOCEXCL) == 1) {
-        printf("Error setting TIOCEXCL on %s - %s(%d).\n", deviceFilePath, strerror(errno), errno);
-        return -1;
-    }
- 
-    // Now that the device is open, clear the O_NONBLOCK flag so 
-    // subsequent I/O will block.
-    // See fcntl(2) ("man 2 fcntl") for details.
- 
-    if (fcntl(fileDescriptor, F_SETFL, 0) == kMyErrReturn)
-    {
-        printf("Error clearing O_NONBLOCK %s - %s(%d).\n",
-            deviceFilePath, strerror(errno), errno);
-        goto error;
-    }
- 
-    // Get the current options and save them so we can restore the 
-    // default settings later.
-    if (tcgetattr(fileDescriptor, &gOriginalTTYAttrs) == kMyErrReturn)
-    {
-        printf("Error getting tty attributes %s - %s(%d).\n",
-            deviceFilePath, strerror(errno), errno);
-        goto error;
-    }
- 
-    // The serial port attributes such as timeouts and baud rate are set by 
-    // modifying the termios structure and then calling tcsetattr to
-    // cause the changes to take effect. Note that the
-    // changes will not take effect without the tcsetattr() call.
-    // See tcsetattr(4) ("man 4 tcsetattr") for details.
- 
-    options = gOriginalTTYAttrs;
- 
-    // Print the current input and output baud rates.
-    // See tcsetattr(4) ("man 4 tcsetattr") for details.
- 
-    printf("Current input baud rate is %d\n", (int) cfgetispeed(&options));
-    printf("Current output baud rate is %d\n", (int) cfgetospeed(&options));
- 
-    // Set raw input (non-canonical) mode, with reads blocking until either 
-    // a single character has been received or a one second timeout expires.
-    // See tcsetattr(4) ("man 4 tcsetattr") and termios(4) ("man 4 termios") 
-    // for details.
- 
-    cfmakeraw(&options);
-    options.c_cc[VMIN] = 1;
-    options.c_cc[VTIME] = 10;
- 
-    // The baud rate, word length, and handshake options can be set as follows:
-
-    cfsetspeed(&options, B115200);
-	options.c_cflag |= (CS8|CCTS_OFLOW|CRTS_IFLOW);
-
-/* 
-    cfsetspeed(&options, B19200);   // Set 19200 baud    
-     options.c_cflag |= (CS7        |// Use 7 bit words
-            PARENB     |        // Enable parity (even parity if PARODD 
-                                // not also set)
-            CCTS_OFLOW |        // CTS flow control of output
-            CRTS_IFLOW);        // RTS flow control of input
- 
-   // Print the new input and output baud rates.
- 
-    printf("Input baud rate changed to %d\n", (int) cfgetispeed(&options));
-    printf("Output baud rate changed to %d\n", (int) cfgetospeed(&options));
- 
-    // Cause the new options to take effect immediately.
-    if (tcsetattr(fileDescriptor, TCSANOW, &options) == kMyErrReturn)
-    {
-        printf("Error setting tty attributes %s - %s(%d).\n",
-            deviceFilePath, strerror(errno), errno);
-        goto error;
-    }
- 
-    // To set the modem handshake lines, use the following ioctls.
-    // See tty(4) ("man 4 tty") and ioctl(2) ("man 2 ioctl") for details.
- 
-    if (ioctl(fileDescriptor, TIOCSDTR) == kMyErrReturn) 
-    // Assert Data Terminal Ready (DTR)
-    {
-        printf("Error asserting DTR %s - %s(%d).\n",
-            deviceFilePath, strerror(errno), errno);
-    }
- 
-    if (ioctl(fileDescriptor, TIOCCDTR) == kMyErrReturn) 
-    // Clear Data Terminal Ready (DTR)
-    {
-        printf("Error clearing DTR %s - %s(%d).\n",
-            deviceFilePath, strerror(errno), errno);
-    }
- 
-    handshake = TIOCM_DTR | TIOCM_RTS | TIOCM_CTS | TIOCM_DSR;
-    // Set the modem lines depending on the bits set in handshake.
-    if (ioctl(fileDescriptor, TIOCMSET, &handshake) == kMyErrReturn)
-    {
-        printf("Error setting handshake lines %s - %s(%d).\n",
-            deviceFilePath, strerror(errno), errno);
-    }
- 
-    // To read the state of the modem lines, use the following ioctl.
-    // See tty(4) ("man 4 tty") and ioctl(2) ("man 2 ioctl") for details.
- 
-    if (ioctl(fileDescriptor, TIOCMGET, &handshake) == kMyErrReturn)
-    // Store the state of the modem lines in handshake.
-    {
-        printf("Error getting handshake lines %s - %s(%d).\n",
-            deviceFilePath, strerror(errno), errno);
-    }
- 
-    printf("Handshake lines currently set to %d\n", handshake);    
  
     // Success:
     return fileDescriptor;

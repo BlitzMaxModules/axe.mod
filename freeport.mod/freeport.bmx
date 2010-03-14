@@ -35,8 +35,10 @@ Import pub.freeprocess
 
 
 ?MacOS
+
 Import "freeport.macos.c"
 Import "-framework IOKit"
+
 Extern "C"
 Function enumports(charbuffer:Byte Ptr,buffersize)	'null separated device list
 Function openserial(portname$z,baud)
@@ -61,6 +63,7 @@ Function ComCount()
 	Next
 	Return applecount
 End Function
+
 Function ComName$(index)
 	Local n$,p
 	n=appleports[index]
@@ -68,6 +71,7 @@ Function ComName$(index)
 	If p=-1 p=Len n
 	Return n[..p]
 End Function
+
 Function ComInfo$(index)
 	Local n$,p
 	n=appleports[index]
@@ -79,16 +83,35 @@ End Function
 Import pub.win32
 Import "freeport.win32.bmx"
 ?Linux
+
 Import "freeport.linux.c"
+
 Extern "C"
-Function enumports(charbuffer:Byte Ptr,buffersize)	'null separated device list
 Function openserial(portname$z,baud)
 Function closeserial(handle)
 End Extern
+
+Global LinuxComList:TList
+
 Function ComCount()
+	Local devdir$[]
+	Local dev$
+	
+	LinuxComList=New TList
+	
+	devdir=LoadDir("/dev")
+	For dev=EachIn devdir
+		If dev[..3]="tty"
+			LinuxComList.addlast "/dev/"+dev
+			DebugLog dev
+		EndIf
+	Next  
+	Return LinuxComList.Count()
 End Function
+
 Function ComName$(index)
 End Function
+
 Function ComInfo$(index)
 End Function
 ?
