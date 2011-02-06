@@ -82,7 +82,7 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 	End Method
 
 	Method SetClsColor( red,green,blue ) 
-		_clscolor=$ff000000|(red Shl 16)|(green Shl 8)|blue
+		_clscolor=$000000|(red Shl 16)|(green Shl 8)|blue
 	End Method
 
 	Method SetViewport( x,y,width,height ) 
@@ -323,12 +323,13 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 		Local aa8=255-a8		
 		r=((s32 & 255)*aa8 + (c24 & 255)*a8) Shr 8
 		g=(((s32 Shr 8) & 255)*aa8 + ((c24 Shr 8)& 255)*a8) Shr 8
-		b=(((s32 Shr 16) & 255)*aa8 + ((c24 Shr 16)& 255)*a8) Shr 8		
+		b=(((s32 Shr 16) & 255)*aa8 + ((c24 Shr 16)& 255)*a8) Shr 8				
+		If s8<a8 s8=a8
 		Return (s8 Shl 24) | (b Shl 16) | (g Shl 8) | (r)
 	End Function
 
 	Method DrawOval( lx0#,ly0#,lx1#,ly1#,tx#,ty# ) 
-		DebugLog "oval"+lx0+","+ly0+","+lx1+","+ly1+","+tx+","+ty
+'		DebugLog "oval"+lx0+","+ly0+","+lx1+","+ly1+","+tx+","+ty
 		Local p:Int Ptr
 		Local w=lx1
 		Local h=ly1
@@ -339,9 +340,21 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 		Local dd#=d*d
 		Local ddd#=(d+1)*(d+1)
 		Local m=255.0/(ddd-dd)		
-		For Local y=ty To ty+h
+
+		Local x0,y0,x1,y1
+				
+		x0=tx+lx0
+		y0=ty+ly0
+		x1=tx+lx1
+		y1=ty+ly1		
+		x0=Max(_clipx,x0)
+		y0=Max(_clipy,y0)
+		x1=Min(_clipx+_clipw-1,x1)
+		y1=Min(_clipy+_cliph-1,y1)		
+		
+		For Local y=y0 To y1
 			p=_pix+y*_span
-			For Local x=tx To tx+w
+			For Local x=x0 To x1
 				Local rr#=(x-cx)*(x-cx)+(y-cy)*(y-cy)*xyxy
 				If rr<ddd		
 					Local c=_color	
