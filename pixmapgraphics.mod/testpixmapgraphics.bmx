@@ -35,6 +35,9 @@ Function testpixmapdrawing(pix:TPixmap)
 
 	DrawImage image2,100,100
 	
+	DrawOval 20,20,300,100
+	DrawOval 20,20,100,300
+	
 	Flip
 
 	CloseGraphics gfx
@@ -61,6 +64,8 @@ Flip
 
 While True
 	If WaitEvent()=EVENT_APPTERMINATE End		
+	If KeyHit(KEY_ESCAPE) End
+	
 Wend
 
 

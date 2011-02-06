@@ -316,8 +316,42 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 			dest:+_span
 		Next
 	End Method
+	
+	Function Blend32(s32,c24,a8)
+		Local r,g,b,a
+		Local s8=(s32 Shr 24) & 255
+		Local aa8=255-a8		
+		r=((s32 & 255)*aa8 + (c24 & 255)*a8) Shr 8
+		g=(((s32 Shr 8) & 255)*aa8 + ((c24 Shr 8)& 255)*a8) Shr 8
+		b=(((s32 Shr 16) & 255)*aa8 + ((c24 Shr 16)& 255)*a8) Shr 8		
+		Return (s8 Shl 24) | (b Shl 16) | (g Shl 8) | (r)
+	End Function
 
 	Method DrawOval( lx0#,ly0#,lx1#,ly1#,tx#,ty# ) 
+		DebugLog "oval"+lx0+","+ly0+","+lx1+","+ly1+","+tx+","+ty
+		Local p:Int Ptr
+		Local w=lx1
+		Local h=ly1
+		Local cx#=tx+w*0.5
+		Local cy#=ty+h*0.5
+		Local xyxy#=w*w*1.0/(h*h)		
+		Local d#=w/2
+		Local dd#=d*d
+		Local ddd#=(d+1)*(d+1)
+		Local m=255.0/(ddd-dd)		
+		For Local y=ty To ty+h
+			p=_pix+y*_span
+			For Local x=tx To tx+w
+				Local rr#=(x-cx)*(x-cx)+(y-cy)*(y-cy)*xyxy
+				If rr<ddd		
+					Local c=_color	
+					If rr>dd					
+						c=blend32(p[x],c,255-m*(rr-dd))					
+					EndIf
+					p[x]=c
+				EndIf
+			Next
+		Next
 	End Method
 		
 	Method DrawPixmap( pixmap:TPixmap,x,y ) 
