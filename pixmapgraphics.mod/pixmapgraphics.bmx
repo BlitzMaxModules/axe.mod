@@ -264,8 +264,8 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 		x1=Min(_clipx+_clipw-1,x1)
 		y1=Min(_clipy+_cliph-1,y1)		
 		p=_pix+y0*_span
-		For y=y0 Until y1
-			For x=x0 Until x1
+		For y=y0 To y1
+			For x=x0 To x1
 				p[x]=_color
 			Next
 			p:+_span
@@ -296,8 +296,8 @@ Type TPixmapDriver Extends TMax2DDriver	'Extends TGraphicsDriver
 		src=src+(y0-ty)*srcspan+(x0-tx-x0)
 		dest=_pix+y0*_span
 
-		For y=y0 Until y1
-			For x=x0 Until x1
+		For y=y0 To y1
+			For x=x0 To x1
 				c=src[x]
 				a=(c Shr 24)&255
 				If a				
