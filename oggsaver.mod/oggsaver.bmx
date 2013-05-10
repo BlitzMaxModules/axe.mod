@@ -95,3 +95,65 @@ Function SaveOGG(sample:TAudioSample,URL:Object,compression#=0.1)
 	CloseStream(output)
 	Return res
 End Function
+
+
+
+Rem
+bbdoc: Save an Audio Sample in WAV format
+about:
+#SaveWAV saves @sample to @url in WAV format. If successful, #SaveWAV returns
+True, otherwise False.<br>
+End Rem
+Function SaveWAV(sample:TAudioSample,URL:Object)
+	Local output:TStream
+	Local channels
+	
+	Select sample.format
+		Case SF_MONO8
+			channels=1
+		Case SF_MONO16LE
+			channels=1			
+		Case SF_MONO16BE
+			channels=1
+		Case SF_STEREO8
+			channels=2
+		Case SF_STEREO16LE
+			channels=2
+		Case SF_STEREO16BE
+			channels=2
+	End Select
+
+	Local bitrate=8
+	
+	Local block = channels * bitrate / 8
+
+	Local count=block*sample.length
+
+
+	output=WriteStream(url)
+	If Not output Return -1
+	
+	'write wav header info
+	output.WriteString("RIFF")						'"RIFF" file description header (4 bytes)
+	output.WriteInt(count + 40)						'file size - 8 (4 bytes)
+	output.WriteString("WAVE")						'"WAVE" description header (4 bytes)
+	output.WriteString("fmt ")						'"fmt " description header (4 bytes)
+	output.WriteInt(16)								'size of WAVE section chunk (4 bytes)
+	output.WriteShort(1)							'WAVE type format (2 bytes)
+	output.WriteShort(channels)						'mono/stereo (2 bytes)
+	output.WriteInt(sample.hertz)					'sample rate (4 bytes)
+	output.WriteInt(sample.hertz * block)			'avg bytes/sec (4 bytes)
+	output.WriteShort(block)						'Block alignment (2 bytes)
+	output.WriteShort(bitrate)						'Bits/sample (2 bytes)
+	output.WriteString("data")						'"data" description header (4 bytes)
+	output.WriteInt(count)							'size of data chunk (4 bytes)
+	
+	For Local i=0 Until count
+		output.WriteByte sample.samples[i]
+	Next
+
+	CloseStream(output)
+	
+	Return True
+
+End Function
